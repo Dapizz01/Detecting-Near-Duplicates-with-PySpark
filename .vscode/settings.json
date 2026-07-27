@@ -1,0 +1,22 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.conda-env/bin/python",
+  "jupyter.notebookFileRoot": "${workspaceFolder}",
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll": "explicit",
+      "source.organizeImports": "explicit"
+    }
+  },
+  "notebook.defaultFormatter": "charliermarsh.ruff",
+  "notebook.formatOnSave.enabled": true,
+  "notebook.codeActionsOnSave": {
+    "notebook.source.fixAll": "explicit",
+    "notebook.source.organizeImports": "explicit"
+  },
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.ipynb_checkpoints": true
+  }
+}

@@ -1,0 +1,18 @@
+name: pyspark-dev
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - openjdk=17
+  - pyspark=4.1.2
+  - pip
+  - pip:
+      - findspark==2.0.1
+      - python-dotenv==1.0.1
+      - jupyterlab==4.2.*
+      - jupyterlab-lsp==5.1.*
+      - python-lsp-server[all]==1.11.*
+      - jupytext==1.16.*
+      - nbstripout==0.7.*
+      - ruff==0.5.*
+      - ipykernel==6.29.*
