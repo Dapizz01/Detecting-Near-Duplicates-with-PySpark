@@ -1,9 +1,11 @@
+import math
+
 import pyspark.sql.functions as F
 from pyspark.ml.feature import Tokenizer
 from pyspark.sql import DataFrame
 
 from src.types import _FINGERPRINT_SIZES
-from src.utils import hex_to_bigint
+from src.utils import hex_to_bigint, merge_fingerprints
 
 
 def evaluate_shingles_pairs(
@@ -24,7 +26,7 @@ def evaluate_shingles_pairs(
     """
     assert input_df.columns == ["ID", "data1", "data2", "is_near_duplicate"]
     assert K > 0
-    assert fingerprint_size in [16, 32, 64, 128, 256, 512]
+    assert fingerprint_size in [16, 32, 64, 128, 256, 512]  # TODO: doesnt work for 16, 32
     df = input_df
 
     # Data cleaning
@@ -63,8 +65,36 @@ def evaluate_shingles_pairs(
                 F.col(f"shingles{i}"), lambda x: F.substring(F.sha2(x, 512), 0, fingerprint_size)
             ),
         )
+        # df.select("hex_shingles1").show(truncate=False)
         df = df.withColumn(f"hashed_shingles{i}", hex_to_bigint(F.col(f"hex_shingles{i}")))
-
+        df = df.withColumn(
+            f"fingerprint{i}",
+            merge_fingerprints(F.col(f"hashed_shingles{i}"), math.ceil(fingerprint_size / 64), K),
+        )
+    df = df.withColumn(
+        "bit_diffs",
+        F.zip_with(
+            F.col("fingerprint1"),
+            F.col("fingerprint2"),
+            lambda x1, x2: F.bit_count(x1.bitwiseXOR(x2)),
+        ),
+        # F.bit_count(F.col("fingerprint1").getItem(0).bitwiseXOR(F.col("fingerprint2").getItem(0))),
+    )
+    df = df.withColumn("result", F.aggregate(F.col("bit_diffs"), F.lit(0), lambda acc, x: acc + x))
+    df = df.drop(
+        "hex_shingles1",
+        "hex_shingles2",
+        "hashed_shingles1",
+        "hashed_shingles2",
+        "shingles1",
+        "shingles2",
+        "fingerprint1",
+        "fingerprint2",
+        "bit_diffs",
+        "data1",
+        "data2",
+    )
+    # TODO: build metrics and return them
     return df
 
 
