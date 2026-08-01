@@ -4,13 +4,18 @@ import pyspark.sql.functions as F
 from pyspark.ml.feature import Tokenizer
 from pyspark.sql import DataFrame
 
+from src.metrics import Metrics, extract_metrics
 from src.types import _FINGERPRINT_SIZES
 from src.utils import hex_to_bigint, merge_fingerprints
 
 
 def evaluate_shingles_pairs(
-    input_df: DataFrame, K: int, fingerprint_size: _FINGERPRINT_SIZES, over_words: bool = False
-) -> DataFrame:
+    input_df: DataFrame,
+    shingle_size: int,
+    fingerprint_size: _FINGERPRINT_SIZES,
+    K: int,
+    over_words: bool = False,
+) -> Metrics:
     """Evaluates the Shingles feature model for benchmark purposes. \n
     Computes the near-similarity of *data1* and *data2* and compares the result with the values in the column *is_near_duplicate*.
 
@@ -26,6 +31,7 @@ def evaluate_shingles_pairs(
     """
     assert input_df.columns == ["ID", "data1", "data2", "is_near_duplicate"]
     assert K > 0
+    assert shingle_size >= 1
     assert fingerprint_size in [16, 32, 64, 128, 256, 512]  # TODO: doesnt work for 16, 32
     df = input_df
 
@@ -51,13 +57,14 @@ def evaluate_shingles_pairs(
             df = df.withColumn(
                 f"shingles{i}",
                 F.transform(
-                    F.sequence(F.lit(1), F.length(f"data{i}") - K + 1),
-                    lambda j: F.substring(f"data{i}", j, K),
+                    F.sequence(F.lit(1), F.length(f"data{i}") - shingle_size + 1),
+                    lambda j: F.substring(f"data{i}", j, shingle_size),
                 ),
             )
 
     # TODO: refactor this, because it's used in tf_idf, bag_of_words too.
     # TODO: is it wiser to use multiple hashing techniques based on the fingerprint size or use sha2 512 for everything?
+    # TODO: is it a good idea to speed the sha2 by using cache on shingles?
     for i in (1, 2):
         df = df.withColumn(
             f"hex_shingles{i}",
@@ -69,10 +76,12 @@ def evaluate_shingles_pairs(
         df = df.withColumn(f"hashed_shingles{i}", hex_to_bigint(F.col(f"hex_shingles{i}")))
         df = df.withColumn(
             f"fingerprint{i}",
-            merge_fingerprints(F.col(f"hashed_shingles{i}"), math.ceil(fingerprint_size / 64), K),
+            merge_fingerprints(
+                F.col(f"hashed_shingles{i}"), math.ceil(fingerprint_size / 64), shingle_size
+            ),
         )
     df = df.withColumn(
-        "bit_diffs",
+        "token_bit_diffs",
         F.zip_with(
             F.col("fingerprint1"),
             F.col("fingerprint2"),
@@ -80,7 +89,12 @@ def evaluate_shingles_pairs(
         ),
         # F.bit_count(F.col("fingerprint1").getItem(0).bitwiseXOR(F.col("fingerprint2").getItem(0))),
     )
-    df = df.withColumn("result", F.aggregate(F.col("bit_diffs"), F.lit(0), lambda acc, x: acc + x))
+    df = df.withColumn(
+        "bit_diffs", F.aggregate(F.col("token_bit_diffs"), F.lit(0), lambda acc, x: acc + x)
+    )
+    df = df.withColumn(
+        "detected_near_duplicate", F.when(F.col("bit_diffs") <= K, True).otherwise(False)
+    )
     df = df.drop(
         "hex_shingles1",
         "hex_shingles2",
@@ -90,12 +104,14 @@ def evaluate_shingles_pairs(
         "shingles2",
         "fingerprint1",
         "fingerprint2",
-        "bit_diffs",
+        "token_bit_diffs",
         "data1",
         "data2",
     )
     # TODO: build metrics and return them
-    return df
+    print(df.explain(extended=True))
+
+    return extract_metrics(df)
 
 
 def evaluate_shingles_batch(
