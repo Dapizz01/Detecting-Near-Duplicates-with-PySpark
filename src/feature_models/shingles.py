@@ -1,42 +1,37 @@
-import math
-
 import pyspark.sql.functions as F
 from pyspark.ml.feature import Tokenizer
 from pyspark.sql import DataFrame
 
-from src.metrics import Metrics, extract_metrics
+from src.simhash import simhash
 from src.types import _FINGERPRINT_SIZES
-from src.utils import hex_to_bigint, merge_fingerprints
 
 
 def evaluate_shingles_pairs(
     input_df: DataFrame,
     shingle_size: int,
     fingerprint_size: _FINGERPRINT_SIZES,
-    K: int,
     over_words: bool = False,
-) -> Metrics:
+) -> DataFrame:
     """Evaluates the Shingles feature model for benchmark purposes. \n
     Computes the near-similarity of *data1* and *data2* and compares the result with the values in the column *is_near_duplicate*.
 
     Args:
         input_df (DataFrame): the PySpark DataFrame dataset. \n
-            Its schema must be ["ID": int, "data1": string, "data2": string, "is_near_duplicate": bool]
-        K (int): size of each shingle
+            Its schema must be ["ID": int, "data1": string, "data2": string]
+        shingle_size (int): size of each shingle
         fingerprint_size (_FINGERPRINT_SIZES): size of each fingerprint
-        over_words (bool): True if the shingles are created using K words, False if the shingles are created using K characters
+        over_words (bool): True if the shingles are created using *shingle_size* words, False if the shingles are created using *shingle_size* characters
 
     Returns:
-        DataFrame: its schema is ["accuracy": float, "precision": float", "recall": float, "f1-score": float]
+        DataFrame: its schema is ["ID": int, "fingerprint1": BinaryType, "fingerprint2": BinaryType]
     """
-    assert input_df.columns == ["ID", "data1", "data2", "is_near_duplicate"]
-    assert K > 0
+    # assert input_df.columns == ["ID", "data1", "data2"]
     assert shingle_size >= 1
     assert fingerprint_size in [16, 32, 64, 128, 256, 512]  # TODO: doesnt work for 16, 32
     df = input_df
 
     # Data cleaning
-    df = df.filter(F.col("is_near_duplicate").isNotNull())
+    # df = df.filter(F.col("is_near_duplicate").isNotNull())
     for i in (1, 2):
         df = df.filter(F.col(f"data{i}").isNotNull())
     for i in (1, 2):
@@ -67,51 +62,18 @@ def evaluate_shingles_pairs(
     # TODO: is it a good idea to speed the sha2 by using cache on shingles?
     for i in (1, 2):
         df = df.withColumn(
-            f"hex_shingles{i}",
+            f"hashed_shingles{i}",
             F.transform(
-                F.col(f"shingles{i}"), lambda x: F.substring(F.sha2(x, 512), 0, fingerprint_size)
+                F.col(f"shingles{i}"),
+                lambda x: F.unhex(F.substring(F.sha2(x, 512), 0, fingerprint_size)),
             ),
         )
-        # df.select("hex_shingles1").show(truncate=False)
-        df = df.withColumn(f"hashed_shingles{i}", hex_to_bigint(F.col(f"hex_shingles{i}")))
         df = df.withColumn(
             f"fingerprint{i}",
-            merge_fingerprints(
-                F.col(f"hashed_shingles{i}"), math.ceil(fingerprint_size / 64), shingle_size
-            ),
+            simhash(F.col(f"hashed_shingles{i}")),  # type: ignore
         )
-    df = df.withColumn(
-        "token_bit_diffs",
-        F.zip_with(
-            F.col("fingerprint1"),
-            F.col("fingerprint2"),
-            lambda x1, x2: F.bit_count(x1.bitwiseXOR(x2)),
-        ),
-        # F.bit_count(F.col("fingerprint1").getItem(0).bitwiseXOR(F.col("fingerprint2").getItem(0))),
-    )
-    df = df.withColumn(
-        "bit_diffs", F.aggregate(F.col("token_bit_diffs"), F.lit(0), lambda acc, x: acc + x)
-    )
-    df = df.withColumn(
-        "detected_near_duplicate", F.when(F.col("bit_diffs") <= K, True).otherwise(False)
-    )
-    df = df.drop(
-        "hex_shingles1",
-        "hex_shingles2",
-        "hashed_shingles1",
-        "hashed_shingles2",
-        "shingles1",
-        "shingles2",
-        "fingerprint1",
-        "fingerprint2",
-        "token_bit_diffs",
-        "data1",
-        "data2",
-    )
-    # TODO: build metrics and return them
-    print(df.explain(extended=True))
-
-    return extract_metrics(df)
+    df = df.drop("data1", "data2", "shingles1", "shingles2", "hashed_shingles1", "hashed_shingles2")
+    return df
 
 
 def evaluate_shingles_batch(
