@@ -12,35 +12,41 @@ class Metrics:
     f1_score: float
 
 
-def extract_metrics(df: DataFrame) -> Metrics:
-    assert "detected_near_duplicate" in df.columns
-    assert "is_near_duplicate" in df.columns
+@dataclass
+class ModelMetrics:
+    model: str
+    K: int
+    fingerprint_size: int
+    shingle_size: int
+    notes: str
+    metrics: Metrics
+
+
+def extract_metrics(df: DataFrame, test_col: str, truth_col: str) -> Metrics:
+    assert test_col in df.columns
+    assert truth_col in df.columns
     bow_metrics = df.agg(
         F.sum(
             F.when(
-                (F.col("is_near_duplicate") == F.lit(True))
-                & (F.col("detected_near_duplicate") == F.lit(True)),
+                (F.col(truth_col) == F.lit(True)) & (F.col(test_col) == F.lit(True)),
                 1,
             ).otherwise(0)
         ).alias("tp"),
         F.sum(
             F.when(
-                (F.col("is_near_duplicate") == F.lit(False))
-                & (F.col("detected_near_duplicate") == F.lit(False)),
+                (F.col(truth_col) == F.lit(False)) & (F.col(test_col) == F.lit(False)),
                 1,
             ).otherwise(0)
         ).alias("tn"),
         F.sum(
             F.when(
-                (F.col("is_near_duplicate") == F.lit(False))
-                & (F.col("detected_near_duplicate") == F.lit(True)),
+                (F.col(truth_col) == F.lit(False)) & (F.col(test_col) == F.lit(True)),
                 1,
             ).otherwise(0)
         ).alias("fp"),
         F.sum(
             F.when(
-                (F.col("is_near_duplicate") == F.lit(True))
-                & (F.col("detected_near_duplicate") == F.lit(False)),
+                (F.col(truth_col) == F.lit(True)) & (F.col(test_col) == F.lit(False)),
                 1,
             ).otherwise(0)
         ).alias("fn"),
