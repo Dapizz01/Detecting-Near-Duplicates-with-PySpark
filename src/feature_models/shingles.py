@@ -2,7 +2,6 @@ import pyspark.sql.functions as F
 from pyspark.ml.feature import NGram, Tokenizer
 from pyspark.sql import DataFrame
 
-from src.fingerprint import FINGERPRINT_SIZES
 from src.simhash import simhash
 
 
@@ -29,7 +28,6 @@ def make_fingerprints(
         DataFrame: the updated DataFrame
     """
     assert shingle_size > 1
-    assert fingerprint_size in FINGERPRINT_SIZES
     assert input_col in df.columns
     assert shingle_size < fingerprint_size
 

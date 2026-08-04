@@ -43,5 +43,8 @@ def read_qqp_benchmark(benchmark_id: int):
         "is_near_duplicate_semantic",
         F.when(F.col("is_near_duplicate_semantic") == 1, True).otherwise(False),
     )
-    # TODO: cast is_near_duplicate_syntax to boolean too
+    df = df.withColumn(
+        "is_near_duplicate_syntax",
+        F.when(F.col("is_near_duplicate_syntax") == 1, True).otherwise(False),
+    )
     return df.withColumnsRenamed({"id": "ID", "question1": "data1", "question2": "data2"})

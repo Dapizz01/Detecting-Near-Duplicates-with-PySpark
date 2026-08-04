@@ -4,6 +4,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
 
 import src.feature_models.shingles as shingles
+from src.feature_models import bag_of_words, embeddings
 
 FINGERPRINT_SIZES = (32, 64, 128, 256, 512, 1024)
 
@@ -28,12 +29,14 @@ def create_fingerprints(
     df = df.filter(F.col(input_col).isNotNull())
     df = (  # Clean column, remove all symbols but a-z and \s
         df.withColumn("cleaned_text", F.regexp_replace(F.col(input_col), r"[\n\r\t]", ""))
-        .withColumn("cleaned_text", F.lower(F.col(input_col)))
-        .withColumn("cleaned_text", F.regexp_replace(F.col(input_col), r"[^a-z\s]", ""))
+        .withColumn("cleaned_text", F.lower(F.col("cleaned_text")))
+        .withColumn("cleaned_text", F.regexp_replace(F.col("cleaned_text"), r"[^a-z\s]", ""))
     )
     match method:
         case "bag_of_words":
-            df = df
+            df = bag_of_words.make_fingerprints(
+                df, input_col="cleaned_text", output_col=output_col, fingerprint_size=size
+            )
         case "shingles":
             df = shingles.make_fingerprints(
                 df,
@@ -45,6 +48,9 @@ def create_fingerprints(
             )
         case "tf-idf":
             df = df
-        case "embeddings":  # TODO: will use input_text, not cleaned_text
-            df = df
+        case "embeddings":
+            df = embeddings.make_fingerprints(
+                df, input_col="cleaned_text", output_col=output_col, fingerprint_size=size
+            )
+    # TODO: remove cleaned_text
     return df
