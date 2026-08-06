@@ -16,7 +16,13 @@ class FingerprintParams:
 
 
 def create_fingerprints(
-    df: DataFrame, method: str, input_col: str, output_col: str, size: int, other: FingerprintParams
+    df: DataFrame,
+    method: str,
+    input_col: str,
+    output_col: str,
+    size: int,
+    fast: bool,
+    other: FingerprintParams,
 ) -> DataFrame:
     """Using the data from *input_col*, creates a SimHash fingerprint inside *output_col*.
 
@@ -26,6 +32,7 @@ def create_fingerprints(
         input_col (str): input column name
         output_col (str): output column name
         size (int): size (in bits) of the fingerprints
+        fastsimhash (bool): True for FastSimHash, False for classic SimHash
         other (FingerprintParams): additional params for the "shingles" feature model
 
     Returns:
@@ -48,7 +55,11 @@ def create_fingerprints(
     match method:
         case "bag_of_words":
             df = bag_of_words.make_fingerprints(
-                df, input_col="cleaned_text", output_col=output_col, fingerprint_size=size
+                df,
+                input_col="cleaned_text",
+                output_col=output_col,
+                fingerprint_size=size,
+                fast=fast,
             )
         case "shingles":
             df = shingles.make_fingerprints(
@@ -56,6 +67,7 @@ def create_fingerprints(
                 input_col="cleaned_text",
                 output_col=output_col,
                 fingerprint_size=size,
+                fast=fast,
                 shingle_size=other.shingle_size,
                 over_words=other.over_words,
             )

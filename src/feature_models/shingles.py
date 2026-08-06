@@ -2,7 +2,7 @@ import pyspark.sql.functions as F
 from pyspark.ml.feature import NGram, Tokenizer
 from pyspark.sql import DataFrame
 
-from src.simhash import simhash
+from src.simhash import fastsimhash, simhash
 
 
 def make_fingerprints(
@@ -10,6 +10,7 @@ def make_fingerprints(
     input_col: str,
     output_col: str,
     fingerprint_size: int,
+    fast: bool,
     shingle_size: int,
     over_words: bool,
 ) -> DataFrame:
@@ -21,6 +22,7 @@ def make_fingerprints(
         input_col (str): input column name
         output_col (str): output column name
         fingerprint_size (int): the size of the fingerprint, in bits
+        fast (bool): the preferred SimHash algorithm - True for FastSimHash, False for classic SimHash
         shingle_size (int): the size of each shingle, in bits
         over_words (bool): True if the shingles are created using *shingle_size* words, False if the shingles are created using *shingle_size* characters.
 
@@ -54,10 +56,16 @@ def make_fingerprints(
         ),  # Each char in hex string is 4 bits
     )
 
-    df = df.withColumn(  # All hashed shingles are merged using *simhash*
-        output_col,
-        simhash(F.col("hashed_shingles")),  # type: ignore
-    )
+    if fast:
+        df = df.withColumn(  # All hashed shingles are merged using *fastsimhash*
+            output_col,
+            fastsimhash(F.col("hashed_shingles")),  # type: ignore
+        )
+    else:
+        df = df.withColumn(  # All hashed shingles are merged using *simhash*
+            output_col,
+            simhash(F.col("hashed_shingles")),  # type: ignore
+        )
 
     # Drop unused columns
     df = df.drop("shingles", "hashed_shingles")
