@@ -9,16 +9,16 @@ def make_fingerprints(
     df: DataFrame, input_col: str, output_col: str, fingerprint_size: int
 ) -> DataFrame:
     """Creates a fingerprint for every value inside *input_col*, using the *bag_of_words* feature model.
-    Two strings are near-duplicate if they contain about the same words, in whichever order.
+    Two strings are near-duplicate if they contain about the same words, in any order.
 
     Args:
-        df (DataFrame): DataFrame where the operations will be made
-        input_col (str): column where the input text is
-        output_col (str): column where the fingerprints will be saved
+        df (DataFrame): input dataframe
+        input_col (str): input column name
+        output_col (str): output column name
         fingerprint_size (int): the size of the fingerprints, in bits
 
     Returns:
-        DataFrame: the updated DataFrame
+        DataFrame: result dataframe
     """
     assert input_col in df.columns
 

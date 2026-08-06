@@ -6,13 +6,23 @@ import requests
 from pyspark.sql import DataFrame
 from pyspark.sql.types import BinaryType
 
+# Those parameters are machine-dependent
 OLLAMA_URL = "http://localhost:11434/api/embed"
 MODEL = "Qwen3-embedding:0.6b"
-BATCH_SIZE = 16  # The optimal value depends on the hardware
+BATCH_SIZE = 16
 
 
 @F.pandas_udf(BinaryType())  # type: ignore # noqa: F821
 def get_embeddings(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
+    """Pandas UDF function that transforms batches of rows into fingerprints, using an embedding model.
+
+    Args:
+        iterator (Iterator[pd.Series]): input batch
+
+    Yields:
+        Iterator[pd.Series]: output batch
+    """
+
     def list_to_bin(vals: list[str]) -> bytes:
         if not vals:
             return b""
@@ -23,12 +33,17 @@ def get_embeddings(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
     def quantize(embeddings: list[float]) -> list[str]:
         return ["0" if val < 0 else "1" for val in embeddings]
 
+    # Ollama provides a handy Python API for queries, but it's not usable
+    # in a Conda environment, because the embedding model is hosted in the base environment.
+    # As a workaround, the HTTP API are used here.
     session = requests.Session()
 
+    # TODO: comment
     for series in iterator:
         text_list = series.tolist()
         embeddings = []
 
+        # Iterate over each batch
         for i in range(0, len(text_list), BATCH_SIZE):
             batch = text_list[i : i + BATCH_SIZE]
             try:
@@ -39,28 +54,30 @@ def get_embeddings(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
                 batch_res = data.get("embeddings", [])
 
                 batch_embeddings = [quantize(emb) for emb in batch_res]
+                # Output: [["0", "1", ...], [...], ...]
                 embeddings.extend([list_to_bin(emb) for emb in batch_embeddings])
+                # Output: [b"\x01\x02", b"...", ...]
             except Exception as e:
                 print(f"Error while generating the embeddings: {e}")
-                # Inseriamo None per mantenere la cardinalità in caso di errore
+                # Padded with None, the output series must have the same number
+                # of elements as the input series
                 embeddings.extend([None] * len(batch))
-
         yield pd.Series(embeddings)
 
 
 def make_fingerprints(
     df: DataFrame, input_col: str, output_col: str, fingerprint_size: int
 ) -> DataFrame:
-    """_summary_
+    """Builds binary fingerprints using a local transformer-based embedding model (Qwen3-embedding:0.6b) via Ollama.
 
     Args:
-        df (DataFrame): _description_
-        input_col (str): _description_
-        output_col (str): _description_
-        fingerprint_size (int): _description_
+        df (DataFrame): input dataframe
+        input_col (str): input column name
+        output_col (str): output column name
+        fingerprint_size (int): size of the fingerprint, in bits.
 
     Returns:
-        DataFrame: _description_
+        DataFrame: output dataframe
     """
     assert input_col in df.columns
 

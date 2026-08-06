@@ -4,6 +4,7 @@ from pyspark.sql.functions import pandas_udf
 from pyspark.sql.types import BinaryType
 
 
+# TODO: it's slow - replace this with FastSimHash
 @pandas_udf(BinaryType())  # type: ignore
 def simhash(hashes: pd.Series) -> pd.Series:
     """Reduces a list of hashes into a single hash.

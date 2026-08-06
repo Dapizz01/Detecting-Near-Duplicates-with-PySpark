@@ -6,10 +6,10 @@ from pyspark.sql import DataFrame
 
 @dataclass
 class Metrics:
-    accuracy: float
-    precision: float
-    recall: float
-    f1_score: float
+    accuracy: float  # How many near-duplicates detections were correct?
+    precision: float  # TODO
+    recall: float  # How many true near-duplicates were detected?
+    f1_score: float  # TODO
 
 
 @dataclass
@@ -52,10 +52,10 @@ def extract_metrics(df: DataFrame, test_col: str, truth_col: str) -> Metrics:
         ).alias("fn"),
     ).collect()[0]
 
-    tp = bow_metrics["tp"]
-    tn = bow_metrics["tn"]
-    fp = bow_metrics["fp"]
-    fn = bow_metrics["fn"]
+    tp = bow_metrics["tp"]  # True positives
+    tn = bow_metrics["tn"]  # True negatives
+    fp = bow_metrics["fp"]  # False positives
+    fn = bow_metrics["fn"]  # False negatives
 
     precision = tp / (tp + fp)
     recall = tp / (tp + fn)

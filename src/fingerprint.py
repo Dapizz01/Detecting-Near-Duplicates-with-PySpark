@@ -18,6 +18,19 @@ class FingerprintParams:
 def create_fingerprints(
     df: DataFrame, method: str, input_col: str, output_col: str, size: int, other: FingerprintParams
 ) -> DataFrame:
+    """Using the data from *input_col*, creates a SimHash fingerprint inside *output_col*.
+
+    Args:
+        df (DataFrame): input dataframe
+        method (str): specifies the feature model - it must be one of "bag_of_words", "embeddings", "shingles", "tf-idf"
+        input_col (str): input column name
+        output_col (str): output column name
+        size (int): size (in bits) of the fingerprints
+        other (FingerprintParams): additional params for the "shingles" feature model
+
+    Returns:
+        DataFrame: output dataframe
+    """
     assert method in ["bag_of_words", "embeddings", "shingles", "tf-idf"]
     assert input_col in df.columns
     assert size in FINGERPRINT_SIZES
@@ -52,5 +65,5 @@ def create_fingerprints(
             df = embeddings.make_fingerprints(
                 df, input_col="cleaned_text", output_col=output_col, fingerprint_size=size
             )
-    # TODO: remove cleaned_text
+    df = df.drop("cleaned_text")
     return df

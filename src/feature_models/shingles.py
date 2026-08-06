@@ -17,15 +17,15 @@ def make_fingerprints(
     These shingles are hashed and merged into a single BinaryType fingerprint of size *fingerprint_size*.
 
     Args:
-        df (DataFrame): DataFrame where the operations will be made
-        input_col (str): the name of the column of *df* where the input text is (StringType)
-        output_col (str): the name of the column where the results will be stored (BinaryType)
+        df (DataFrame): input dataframe
+        input_col (str): input column name
+        output_col (str): output column name
         fingerprint_size (int): the size of the fingerprint, in bits
         shingle_size (int): the size of each shingle, in bits
         over_words (bool): True if the shingles are created using *shingle_size* words, False if the shingles are created using *shingle_size* characters.
 
     Returns:
-        DataFrame: the updated DataFrame
+        DataFrame: output dataframe
     """
     assert shingle_size > 1
     assert input_col in df.columns
