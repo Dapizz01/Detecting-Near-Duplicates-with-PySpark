@@ -1,142 +1,64 @@
-import math
-
 import pyspark.sql.functions as F
-from pyspark.ml.feature import Tokenizer
+from pyspark.ml.feature import NGram, Tokenizer
 from pyspark.sql import DataFrame
 
-from src.metrics import Metrics, extract_metrics
-from src.types import _FINGERPRINT_SIZES
-from src.utils import hex_to_bigint, merge_fingerprints
+from src.simhash import simhash
 
 
-def evaluate_shingles_pairs(
-    input_df: DataFrame,
+def make_fingerprints(
+    df: DataFrame,
+    input_col: str,
+    output_col: str,
+    fingerprint_size: int,
     shingle_size: int,
-    fingerprint_size: _FINGERPRINT_SIZES,
-    K: int,
-    over_words: bool = False,
-) -> Metrics:
-    """Evaluates the Shingles feature model for benchmark purposes. \n
-    Computes the near-similarity of *data1* and *data2* and compares the result with the values in the column *is_near_duplicate*.
+    over_words: bool,
+) -> DataFrame:
+    """Splits text inside the column *col* of *df* into overlapping shingles of size *shingle_size*.
+    These shingles are hashed and merged into a single BinaryType fingerprint of size *fingerprint_size*.
 
     Args:
-        input_df (DataFrame): the PySpark DataFrame dataset. \n
-            Its schema must be ["ID": int, "data1": string, "data2": string, "is_near_duplicate": bool]
-        K (int): size of each shingle
-        fingerprint_size (_FINGERPRINT_SIZES): size of each fingerprint
-        over_words (bool): True if the shingles are created using K words, False if the shingles are created using K characters
+        df (DataFrame): input dataframe
+        input_col (str): input column name
+        output_col (str): output column name
+        fingerprint_size (int): the size of the fingerprint, in bits
+        shingle_size (int): the size of each shingle, in bits
+        over_words (bool): True if the shingles are created using *shingle_size* words, False if the shingles are created using *shingle_size* characters.
 
     Returns:
-        DataFrame: its schema is ["accuracy": float, "precision": float", "recall": float, "f1-score": float]
+        DataFrame: output dataframe
     """
-    assert input_df.columns == ["ID", "data1", "data2", "is_near_duplicate"]
-    assert K > 0
-    assert shingle_size >= 1
-    assert fingerprint_size in [16, 32, 64, 128, 256, 512]  # TODO: doesnt work for 16, 32
-    df = input_df
+    assert shingle_size > 1
+    assert input_col in df.columns
+    assert shingle_size < fingerprint_size
 
-    # Data cleaning
-    df = df.filter(F.col("is_near_duplicate").isNotNull())
-    for i in (1, 2):
-        df = df.filter(F.col(f"data{i}").isNotNull())
-    for i in (1, 2):
-        df = (
-            df.withColumn(f"data{i}", F.regexp_replace(F.col(f"data{i}"), r"[\n\r\t]", ""))
-            .withColumn(f"data{i}", F.lower(F.col(f"data{i}")))
-            .withColumn(f"data{i}", F.regexp_replace(F.col(f"data{i}"), r"[^a-z\s]", ""))
-        )  # TODO: should I keep spaces in the RegEx?
-
-    # Shingles creation in columns shingles1, shingles2
     if over_words:  # "this is a test", K = 2 -> ["this is", "is a", "a test"]
-        for i in (1, 2):
-            tokenizer = Tokenizer(inputCol=f"data{i}", outputCol=f"shingles{i}")
-            df = tokenizer.transform(df)
-        # TODO: implement NGram
+        tokenizer = Tokenizer(inputCol=input_col, outputCol="tokens")
+        df = tokenizer.transform(df)
+        ngram = NGram(n=shingle_size, inputCol="tokens", outputCol="shingles")
+        df = ngram.transform(df)
+        df.drop("tokens")
     else:  # "this is a test", K = 2 -> ["th", "hi", "is", ...]
-        for i in (1, 2):
-            df = df.withColumn(
-                f"shingles{i}",
-                F.transform(
-                    F.sequence(F.lit(1), F.length(f"data{i}") - shingle_size + 1),
-                    lambda j: F.substring(f"data{i}", j, shingle_size),
-                ),
-            )
-
-    # TODO: refactor this, because it's used in tf_idf, bag_of_words too.
-    # TODO: is it wiser to use multiple hashing techniques based on the fingerprint size or use sha2 512 for everything?
-    # TODO: is it a good idea to speed the sha2 by using cache on shingles?
-    for i in (1, 2):
         df = df.withColumn(
-            f"hex_shingles{i}",
+            "shingles",
             F.transform(
-                F.col(f"shingles{i}"), lambda x: F.substring(F.sha2(x, 512), 0, fingerprint_size)
+                F.sequence(F.lit(1), F.length(input_col) - shingle_size + 1),
+                lambda j: F.substring(input_col, j, shingle_size),
             ),
         )
-        # df.select("hex_shingles1").show(truncate=False)
-        df = df.withColumn(f"hashed_shingles{i}", hex_to_bigint(F.col(f"hex_shingles{i}")))
-        df = df.withColumn(
-            f"fingerprint{i}",
-            merge_fingerprints(
-                F.col(f"hashed_shingles{i}"), math.ceil(fingerprint_size / 64), shingle_size
-            ),
-        )
-    df = df.withColumn(
-        "token_bit_diffs",
-        F.zip_with(
-            F.col("fingerprint1"),
-            F.col("fingerprint2"),
-            lambda x1, x2: F.bit_count(x1.bitwiseXOR(x2)),
-        ),
-        # F.bit_count(F.col("fingerprint1").getItem(0).bitwiseXOR(F.col("fingerprint2").getItem(0))),
+
+    df = df.withColumn(  # Each shingle is hashed, into a BinaryType
+        "hashed_shingles",
+        F.transform(
+            F.col("shingles"),
+            lambda x: F.unhex(F.substring(F.sha2(x, 512), 0, int(fingerprint_size / 4))),
+        ),  # Each char in hex string is 4 bits
     )
-    df = df.withColumn(
-        "bit_diffs", F.aggregate(F.col("token_bit_diffs"), F.lit(0), lambda acc, x: acc + x)
+
+    df = df.withColumn(  # All hashed shingles are merged using *simhash*
+        output_col,
+        simhash(F.col("hashed_shingles")),  # type: ignore
     )
-    df = df.withColumn(
-        "detected_near_duplicate", F.when(F.col("bit_diffs") <= K, True).otherwise(False)
-    )
-    df = df.drop(
-        "hex_shingles1",
-        "hex_shingles2",
-        "hashed_shingles1",
-        "hashed_shingles2",
-        "shingles1",
-        "shingles2",
-        "fingerprint1",
-        "fingerprint2",
-        "token_bit_diffs",
-        "data1",
-        "data2",
-    )
-    # TODO: build metrics and return them
-    print(df.explain(extended=True))
 
-    return extract_metrics(df)
-
-
-def evaluate_shingles_batch(
-    df: DataFrame,
-    query: DataFrame,
-    K: int,
-    fingerprint_size: _FINGERPRINT_SIZES,
-    over_words: bool,
-    benchmark: bool,
-) -> DataFrame:
-    assert df.columns == ["ID", "data"]
-    assert K > 0
-    assert fingerprint_size in [16, 32, 64, 128, 256, 512]
-    return df
-
-
-def evaluate_shingles_online(
-    df: DataFrame,
-    query: str,
-    K: int,
-    fingerprint_size: _FINGERPRINT_SIZES,
-    over_words: bool,
-    benchmark: bool,
-) -> DataFrame:
-    assert df.columns == ["ID", "data"]
-    assert K > 0
-    assert fingerprint_size in [16, 32, 64, 128, 256, 512]
+    # Drop unused columns
+    df = df.drop("shingles", "hashed_shingles")
     return df

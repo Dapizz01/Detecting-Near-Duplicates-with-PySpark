@@ -9,13 +9,8 @@ from .config import (
 
 
 def get_spark() -> SparkSession:
-    """
-    Creates a local SparkSession, using the parameters in the configuration file.
+    """Creates a local SparkSession, using the parameters in the configuration file.
     Returns the instance of SparkSession if Spark is already initialized.
-
-    Usage:
-        from src.spark_utils import get_spark
-        spark = get_spark()
     """
     builder = (
         SparkSession.builder.appName(SPARK_APP_NAME)
@@ -28,5 +23,9 @@ def get_spark() -> SparkSession:
 
 
 def stop_spark(spark: SparkSession) -> None:
-    """Stops the current SparkSession."""
+    """Stops the current SparkSession.
+
+    Args:
+        spark (SparkSession): the Spark session to close.
+    """
     spark.stop()

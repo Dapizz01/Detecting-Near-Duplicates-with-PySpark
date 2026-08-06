@@ -6,50 +6,56 @@ from pyspark.sql import DataFrame
 
 @dataclass
 class Metrics:
-    accuracy: float
-    precision: float
-    recall: float
-    f1_score: float
+    accuracy: float  # How many near-duplicates detections were correct?
+    precision: float  # TODO
+    recall: float  # How many true near-duplicates were detected?
+    f1_score: float  # TODO
 
 
-def extract_metrics(df: DataFrame) -> Metrics:
-    assert "detected_near_duplicate" in df.columns
-    assert "is_near_duplicate" in df.columns
+@dataclass
+class ModelMetrics:
+    model: str
+    K: int
+    fingerprint_size: int
+    shingle_size: int
+    notes: str
+    metrics: Metrics
+
+
+def extract_metrics(df: DataFrame, test_col: str, truth_col: str) -> Metrics:
+    assert test_col in df.columns
+    assert truth_col in df.columns
     bow_metrics = df.agg(
         F.sum(
             F.when(
-                (F.col("is_near_duplicate") == F.lit(True))
-                & (F.col("detected_near_duplicate") == F.lit(True)),
+                (F.col(truth_col) == F.lit(True)) & (F.col(test_col) == F.lit(True)),
                 1,
             ).otherwise(0)
         ).alias("tp"),
         F.sum(
             F.when(
-                (F.col("is_near_duplicate") == F.lit(False))
-                & (F.col("detected_near_duplicate") == F.lit(False)),
+                (F.col(truth_col) == F.lit(False)) & (F.col(test_col) == F.lit(False)),
                 1,
             ).otherwise(0)
         ).alias("tn"),
         F.sum(
             F.when(
-                (F.col("is_near_duplicate") == F.lit(False))
-                & (F.col("detected_near_duplicate") == F.lit(True)),
+                (F.col(truth_col) == F.lit(False)) & (F.col(test_col) == F.lit(True)),
                 1,
             ).otherwise(0)
         ).alias("fp"),
         F.sum(
             F.when(
-                (F.col("is_near_duplicate") == F.lit(True))
-                & (F.col("detected_near_duplicate") == F.lit(False)),
+                (F.col(truth_col) == F.lit(True)) & (F.col(test_col) == F.lit(False)),
                 1,
             ).otherwise(0)
         ).alias("fn"),
     ).collect()[0]
 
-    tp = bow_metrics["tp"]
-    tn = bow_metrics["tn"]
-    fp = bow_metrics["fp"]
-    fn = bow_metrics["fn"]
+    tp = bow_metrics["tp"]  # True positives
+    tn = bow_metrics["tn"]  # True negatives
+    fp = bow_metrics["fp"]  # False positives
+    fn = bow_metrics["fn"]  # False negatives
 
     precision = tp / (tp + fp)
     recall = tp / (tp + fn)
