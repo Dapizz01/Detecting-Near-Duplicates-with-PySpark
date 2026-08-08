@@ -51,3 +51,24 @@ def read_qqp_benchmark(benchmark_id: int):
         F.when(F.col("is_near_duplicate_syntax") == 1, True).otherwise(False),
     )
     return df.withColumnsRenamed({"id": "ID", "question1": "data1", "question2": "data2"})
+
+
+def read_feature_benchmark(which: str):
+    # TODO: comments
+    assert which in ("easy", "hard")
+    spark = get_spark()
+    df = spark.read.csv(
+        str(data_path(f"feature_benchmark_{which}.csv")),
+        header=True,
+        sep=",",
+        inferSchema=True,
+    )
+    df = df.withColumn(
+        "is_near_duplicate_semantic",
+        F.when(F.col("is_near_duplicate_semantic") == 1, True).otherwise(False),
+    )
+    df = df.withColumn(
+        "is_near_duplicate_syntax",
+        F.when(F.col("is_near_duplicate_syntax") == 1, True).otherwise(False),
+    )
+    return df.withColumnsRenamed({"id": "ID"})

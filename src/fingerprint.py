@@ -6,7 +6,7 @@ from pyspark.sql import DataFrame
 import src.feature_models.shingles as shingles
 from src.feature_models import bag_of_words, embeddings
 
-FINGERPRINT_SIZES = (32, 64, 128, 256, 512, 1024)
+FINGERPRINT_SIZES = (32, 64, 128, 256, 512)  # TODO: add 1024?
 
 
 @dataclass
@@ -22,7 +22,7 @@ def create_fingerprints(
     output_col: str,
     size: int,
     fast: bool,
-    other: FingerprintParams,
+    other: FingerprintParams | None,
 ) -> DataFrame:
     """Using the data from *input_col*, creates a SimHash fingerprint inside *output_col*.
 
@@ -42,10 +42,6 @@ def create_fingerprints(
     assert input_col in df.columns
     assert size in FINGERPRINT_SIZES
 
-    if method == "shingles":
-        assert other is not None
-        assert other.shingle_size < size
-
     df = df.filter(F.col(input_col).isNotNull())
     df = (  # Clean column, remove all symbols but a-z and \s
         df.withColumn("cleaned_text", F.regexp_replace(F.col(input_col), r"[\n\r\t]", ""))
@@ -62,6 +58,9 @@ def create_fingerprints(
                 fast=fast,
             )
         case "shingles":
+            assert other is not None
+            assert other.shingle_size < size
+
             df = shingles.make_fingerprints(
                 df,
                 input_col="cleaned_text",

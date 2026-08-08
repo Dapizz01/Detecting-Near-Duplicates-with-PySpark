@@ -38,7 +38,7 @@ def make_fingerprints(
         df = tokenizer.transform(df)
         ngram = NGram(n=shingle_size, inputCol="tokens", outputCol="shingles")
         df = ngram.transform(df)
-        df.drop("tokens")
+        df = df.drop("tokens")
     else:  # "this is a test", K = 2 -> ["th", "hi", "is", ...]
         df = df.withColumn(
             "shingles",
