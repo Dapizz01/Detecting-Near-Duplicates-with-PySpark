@@ -33,7 +33,7 @@ def near_duplicates_pairs(df: DataFrame, f1: str, f2: str, K: int) -> DataFrame:
     return df
 
 
-# TODO: finish docstring
+# TODO: finish (and update) docstring
 def near_duplicates_benchmark(
     df: DataFrame, f1_col: str, f2_col: str, truth_col: str, K: int
 ) -> Metrics:
