@@ -1,8 +1,7 @@
 import pyspark.sql.functions as F
-from pyspark.ml.feature import Tokenizer
 from pyspark.sql import DataFrame
 
-from src.simhash import fastsimhash, simhash
+from src.simhash import simhash_bow
 
 
 def make_fingerprints(
@@ -23,21 +22,9 @@ def make_fingerprints(
     """
     assert input_col in df.columns
 
-    tokenizer = Tokenizer(inputCol=input_col, outputCol="words")
-    df = tokenizer.transform(df)
-
-    df = df.withColumn(  # Each word is hashed into a BinaryType
-        "hashed_words",
-        F.transform(
-            F.col("words"),
-            lambda x: F.unhex(F.substring(F.sha2(x, 512), 0, int(fingerprint_size / 4))),
-        ),  # Each char in hex string is 4 bits
+    df = (
+        df.withColumn("fingerprint_size", F.lit(fingerprint_size))
+        .withColumn(output_col, simhash_bow(F.col(input_col), F.col("fingerprint_size")))  # type: ignore
+        .drop("fingerprint_size")
     )
-
-    if fast:
-        df = df.withColumn(output_col, fastsimhash(F.col("hashed_words")))  # type: ignore
-    else:
-        df = df.withColumn(output_col, simhash(F.col("hashed_words")))  # type: ignore
-
-    df = df.drop("words", "hashed_words")
     return df

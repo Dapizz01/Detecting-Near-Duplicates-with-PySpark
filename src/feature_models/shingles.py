@@ -1,8 +1,7 @@
 import pyspark.sql.functions as F
-from pyspark.ml.feature import NGram, Tokenizer
 from pyspark.sql import DataFrame
 
-from src.simhash import fastsimhash, simhash
+from src.simhash import simhash_shingles
 
 
 def make_fingerprints(
@@ -33,40 +32,13 @@ def make_fingerprints(
     assert input_col in df.columns
     assert shingle_size < fingerprint_size
 
-    if over_words:  # "this is a test", K = 2 -> ["this is", "is a", "a test"]
-        tokenizer = Tokenizer(inputCol=input_col, outputCol="tokens")
-        df = tokenizer.transform(df)
-        ngram = NGram(n=shingle_size, inputCol="tokens", outputCol="shingles")
-        df = ngram.transform(df)
-        df = df.drop("tokens")
-    else:  # "this is a test", K = 2 -> ["th", "hi", "is", ...]
-        df = df.withColumn(
-            "shingles",
-            F.transform(
-                F.sequence(F.lit(1), F.length(input_col) - shingle_size + 1),
-                lambda j: F.substring(input_col, j, shingle_size),
-            ),
+    df = (
+        df.withColumn("fingerprint_size", F.lit(fingerprint_size))
+        .withColumn("window_size", F.lit(shingle_size))
+        .withColumn(
+            output_col,
+            simhash_shingles(F.col(input_col), F.col("window_size"), F.col("fingerprint_size")),  # type: ignore
         )
-
-    df = df.withColumn(  # Each shingle is hashed, into a BinaryType
-        "hashed_shingles",
-        F.transform(
-            F.col("shingles"),
-            lambda x: F.unhex(F.substring(F.sha2(x, 512), 0, int(fingerprint_size / 4))),
-        ),  # Each char in hex string is 4 bits
     )
-
-    if fast:
-        df = df.withColumn(  # All hashed shingles are merged using *fastsimhash*
-            output_col,
-            fastsimhash(F.col("hashed_shingles")),  # type: ignore
-        )
-    else:
-        df = df.withColumn(  # All hashed shingles are merged using *simhash*
-            output_col,
-            simhash(F.col("hashed_shingles")),  # type: ignore
-        )
-
-    # Drop unused columns
-    df = df.drop("shingles", "hashed_shingles")
+    df = df.drop("fingerprint_size", "window_size")
     return df

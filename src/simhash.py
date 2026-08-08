@@ -1,3 +1,5 @@
+from hashlib import blake2b
+
 import numpy as np
 import pandas as pd
 from numba import njit
@@ -102,7 +104,29 @@ def fastsimhash(hashes: pd.Series) -> pd.Series:
         # Merges list of integers (parts of fingerprint) into a single bytes Python value (the fingerprint)
         return fingerprint_list.tobytes()
 
-    return hashes.apply(fast_merge)
+    return hashes.apply(fast_merge)  # TODO: replace apply for list comprehension? ...maybe?
+
+
+# TODO: Refactor name
+def fastsimhash_test(hashes: list[bytes]) -> bytes:
+    """Helper function, bundles all the hashes into a matrix and calls *_numba_fastsimhash*.
+
+    Args:
+        byte_list (list[bytes]): list of hashes
+
+    Returns:
+        bytes: fingerprint
+    """
+    if hashes is None or len(hashes) == 0:
+        raise Exception("An empty byte_list has been passed to fast_merge")
+    n = len(hashes)
+    hash_len = len(hashes[0])  # Returns num of bytes in an hash
+    # Aggregates hashes into a matrix.
+    # byte_matrix[i][j] = j-th bit of hash i
+    byte_matrix = np.frombuffer(b"".join(hashes), dtype=np.uint8).reshape(n, hash_len)
+    fingerprint_list = _numba_fastsimhash(byte_matrix, n, hash_len)
+    # Merges list of integers (parts of fingerprint) into a single bytes Python value (the fingerprint)
+    return fingerprint_list.tobytes()
 
 
 @pandas_udf(BinaryType())  # type: ignore
@@ -139,3 +163,38 @@ def simhash(hashes: pd.Series) -> pd.Series:
         return fingerprint
 
     return hashes.apply(merge)
+
+
+# TODO: Refactor name
+@pandas_udf(BinaryType())  # type: ignore
+def simhash_shingles(
+    text: pd.Series, window_size: pd.Series, fingerprint_size: pd.Series
+) -> pd.Series:
+    def compute(text: str, window_size: int, fingerprint_size: int) -> bytes:
+        if not text or window_size >= len(text):
+            raise Exception("[compute_shingles_simhash]: invalid text or window_size")
+        shingles = [text[i : i + window_size] for i in range(len(text) - window_size + 1)]
+        # TODO: change with faster hash function
+        hashes = [
+            blake2b(shingle.encode(), digest_size=int(fingerprint_size / 8)).digest()
+            for shingle in shingles
+        ]
+        return fastsimhash_test(hashes=hashes)
+
+    return pd.Series([compute(t, ws, fs) for t, ws, fs in zip(text, window_size, fingerprint_size)])
+
+
+@pandas_udf(BinaryType())  # type: ignore
+def simhash_bow(text: pd.Series, fingerprint_size: pd.Series) -> pd.Series:
+    def compute(text: str, fingerprint_size: int) -> bytes:
+        if not text:
+            raise Exception("[compute]: invalid text for bag_of_words")
+        tokens = text.split()
+        # TODO: change with faster hash function
+        hashes = [
+            blake2b(token.encode(), digest_size=int(fingerprint_size / 8)).digest()
+            for token in tokens
+        ]
+        return fastsimhash_test(hashes=hashes)
+
+    return pd.Series([compute(t, fs) for t, fs in zip(text, fingerprint_size)])
