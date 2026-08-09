@@ -3,8 +3,7 @@ from dataclasses import dataclass
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
 
-import src.feature_models.shingles as shingles
-from src.feature_models import bag_of_words, embeddings
+from src.feature_models import bag_of_words, embeddings, shingles, tf_idf
 
 FINGERPRINT_SIZES = (32, 64, 128, 256, 512)  # TODO: add 1024?
 
@@ -71,7 +70,9 @@ def create_fingerprints(
                 over_words=other.over_words,
             )
         case "tf-idf":
-            df = df
+            df = tf_idf.make_fingerprints(
+                df, input_col="cleaned_text", output_col=output_col, fingerprint_size=size
+            )
         case "embeddings":
             df = embeddings.make_fingerprints(
                 df, input_col="cleaned_text", output_col=output_col, fingerprint_size=size
