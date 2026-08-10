@@ -2,8 +2,9 @@ import pyspark.sql.functions as F
 from pyspark.ml.feature import Tokenizer
 from pyspark.sql import DataFrame
 
+from src.simhash import simhash_tf_idf
 
-# TODO: check that it works as it should
+
 def make_fingerprints(
     df: DataFrame, input_col: str, output_col: str, fingerprint_size: int
 ) -> DataFrame:
@@ -20,29 +21,57 @@ def make_fingerprints(
     """
     assert input_col in df.columns
 
-    tokenizer = Tokenizer(inputCol=input_col, outputCol="tokens")
+    tokenizer = Tokenizer(inputCol=input_col, outputCol="words")
     df = tokenizer.transform(df)
+
+    # Incremental ID for each row
+    df = df.withColumn("_row_id", F.monotonically_increasing_id())
 
     N = df.count()
 
+    # Schema: _row_id, pos (index of word in tokens), word
+    df_exploded = df.select("_row_id", F.posexplode(F.col("words")).alias("pos", "word"))
+
+    # IDF - groups by word and counts how many different _row_id it has, then inverts it.
     idf = (
-        df.select(F.explode(F.array_distinct(F.col("tokens"))).alias("word"))
+        df_exploded.select("_row_id", "word")
+        .distinct()
         .groupby("word")
         .agg(F.count("*").alias("df"))
         .withColumn("idf", F.log(F.lit(N) / F.col("df")))
     )
 
-    # TODO: not so efficient to use collect, optimize?
-    idf_dict = {row["word"]: float(row["idf"]) for row in idf.collect()}
-    idf_map = F.create_map([F.lit(x) for item in idf_dict.items() for x in item])
+    # TF - group by (id, word) and count
+    tf = df_exploded.groupby("_row_id", "word").agg(F.count("*").alias("tf"))
 
-    df = df.withColumn(
-        "tf",
-        F.transform(F.col("tokens"), lambda x: F.size(F.filter(F.col("tokens"), lambda y: y == x))),
+    # TF-IDF - joins tf with idf
+    tf_idf = tf.join(F.broadcast(idf), on="word").withColumn("tf_idf", F.col("tf") * F.col("idf"))
+
+    # Matches every term with its computed TF-IDF
+    weighted = df_exploded.join(tf_idf.select("_row_id", "word", "tf_idf"), on=["_row_id", "word"])
+
+    # Aggregates data back into a list, using a struct to preserve the rows
+    agg = weighted.groupby("_row_id").agg(
+        F.sort_array(F.collect_list(F.struct("pos", "word", "tf_idf"))).alias("items")
     )
-    df = df.withColumn(
-        "tf-idf",
-        F.zip_with(F.col("tokens"), F.col("tf"), lambda word, tf: tf * idf_map.getItem(word)),
+    agg = (
+        agg.withColumn("tokens_ordered", F.col("items.word"))
+        .withColumn("tf_idf_ordered", F.col("items.tf_idf"))
+        .drop("items")
     )
+
+    # Join original df with the aggregated one
+    df = df.join(agg, on="_row_id")
+
+    df = df.withColumn("fingerprint_size", F.lit(fingerprint_size))
+    df = df.withColumn(
+        output_col,
+        simhash_tf_idf(  # type: ignore
+            F.col("tokens_ordered"),  # type: ignore
+            F.col("tf_idf_ordered"),  # type: ignore
+            F.col("fingerprint_size"),  # type: ignore
+        ),
+    )
+    df = df.drop("words", "tokens_ordered", "tf_idf_ordered", "fingerprint_size", "_row_id")
 
     return df

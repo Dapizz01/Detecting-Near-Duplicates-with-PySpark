@@ -1,7 +1,7 @@
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
 
-from src.simhash import simhash_shingles
+from src.simhash import simhash_shingles_over_chars, simhash_shingles_over_words
 
 
 def make_fingerprints(
@@ -9,7 +9,6 @@ def make_fingerprints(
     input_col: str,
     output_col: str,
     fingerprint_size: int,
-    fast: bool,
     shingle_size: int,
     over_words: bool,
 ) -> DataFrame:
@@ -21,7 +20,6 @@ def make_fingerprints(
         input_col (str): input column name
         output_col (str): output column name
         fingerprint_size (int): the size of the fingerprint, in bits
-        fast (bool): the preferred SimHash algorithm - True for FastSimHash, False for classic SimHash
         shingle_size (int): the size of each shingle, in bits
         over_words (bool): True if the shingles are created using *shingle_size* words, False if the shingles are created using *shingle_size* characters.
 
@@ -37,7 +35,20 @@ def make_fingerprints(
         .withColumn("window_size", F.lit(shingle_size))
         .withColumn(
             output_col,
-            simhash_shingles(F.col(input_col), F.col("window_size"), F.col("fingerprint_size")),  # type: ignore
+            F.when(
+                F.lit(over_words) == F.lit(True),
+                simhash_shingles_over_chars(
+                    F.col(input_col),  # type: ignore
+                    F.col("window_size"),  # type: ignore
+                    F.col("fingerprint_size"),  # type: ignore
+                ),
+            ).otherwise(
+                simhash_shingles_over_words(
+                    F.col(input_col),  # type: ignore
+                    F.col("window_size"),  # type: ignore
+                    F.col("fingerprint_size"),  # type: ignore
+                )
+            ),
         )
     )
     df = df.drop("fingerprint_size", "window_size")

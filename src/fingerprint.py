@@ -5,7 +5,7 @@ from pyspark.sql import DataFrame
 
 from src.feature_models import bag_of_words, embeddings, shingles, tf_idf
 
-FINGERPRINT_SIZES = (32, 64, 128, 256, 512)  # TODO: add 1024?
+FINGERPRINT_SIZES = (32, 64, 128, 256, 512, 1024)
 
 
 @dataclass
@@ -20,7 +20,6 @@ def create_fingerprints(
     input_col: str,
     output_col: str,
     size: int,
-    fast: bool,
     other: FingerprintParams | None,
 ) -> DataFrame:
     """Using the data from *input_col*, creates a SimHash fingerprint inside *output_col*.
@@ -31,7 +30,6 @@ def create_fingerprints(
         input_col (str): input column name
         output_col (str): output column name
         size (int): size (in bits) of the fingerprints
-        fastsimhash (bool): True for FastSimHash, False for classic SimHash
         other (FingerprintParams): additional params for the "shingles" feature model
 
     Returns:
@@ -54,7 +52,6 @@ def create_fingerprints(
                 input_col="cleaned_text",
                 output_col=output_col,
                 fingerprint_size=size,
-                fast=fast,
             )
         case "shingles":
             assert other is not None
@@ -65,7 +62,6 @@ def create_fingerprints(
                 input_col="cleaned_text",
                 output_col=output_col,
                 fingerprint_size=size,
-                fast=fast,
                 shingle_size=other.shingle_size,
                 over_words=other.over_words,
             )

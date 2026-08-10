@@ -5,7 +5,7 @@ from src.simhash import simhash_bow
 
 
 def make_fingerprints(
-    df: DataFrame, input_col: str, output_col: str, fingerprint_size: int, fast: bool
+    df: DataFrame, input_col: str, output_col: str, fingerprint_size: int
 ) -> DataFrame:
     """Creates a fingerprint for every value inside *input_col*, using the *bag_of_words* feature model.
     Two strings are near-duplicate if they contain about the same words, in any order.
@@ -15,7 +15,6 @@ def make_fingerprints(
         input_col (str): input column name
         output_col (str): output column name
         fingerprint_size (int): the size of the fingerprints, in bits
-        fast (bool): the preferred SimHash algorithm - True for FastSimHash, False for classic SimHash
 
     Returns:
         DataFrame: result dataframe
