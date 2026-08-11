@@ -1,12 +1,11 @@
 import pyspark.sql.functions as F
-from pyspark.ml.feature import Tokenizer
 from pyspark.sql import DataFrame
 
-from src.simhash import fastsimhash, simhash
+from src.simhash import simhash_bow
 
 
 def make_fingerprints(
-    df: DataFrame, input_col: str, output_col: str, fingerprint_size: int, fast: bool
+    df: DataFrame, input_col: str, output_col: str, fingerprint_size: int
 ) -> DataFrame:
     """Creates a fingerprint for every value inside *input_col*, using the *bag_of_words* feature model.
     Two strings are near-duplicate if they contain about the same words, in any order.
@@ -16,28 +15,15 @@ def make_fingerprints(
         input_col (str): input column name
         output_col (str): output column name
         fingerprint_size (int): the size of the fingerprints, in bits
-        fast (bool): the preferred SimHash algorithm - True for FastSimHash, False for classic SimHash
 
     Returns:
         DataFrame: result dataframe
     """
     assert input_col in df.columns
 
-    tokenizer = Tokenizer(inputCol=input_col, outputCol="words")
-    df = tokenizer.transform(df)
-
-    df = df.withColumn(  # Each word is hashed into a BinaryType
-        "hashed_words",
-        F.transform(
-            F.col("words"),
-            lambda x: F.unhex(F.substring(F.sha2(x, 512), 0, int(fingerprint_size / 4))),
-        ),  # Each char in hex string is 4 bits
+    df = (
+        df.withColumn("fingerprint_size", F.lit(fingerprint_size))
+        .withColumn(output_col, simhash_bow(F.col(input_col), F.col("fingerprint_size")))  # type: ignore
+        .drop("fingerprint_size")
     )
-
-    if fast:
-        df = df.withColumn(output_col, fastsimhash(F.col("hashed_words")))  # type: ignore
-    else:
-        df = df.withColumn(output_col, simhash(F.col("hashed_words")))  # type: ignore
-
-    df = df.drop("words", "hashed_words")
     return df

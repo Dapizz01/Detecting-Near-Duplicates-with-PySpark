@@ -1,3 +1,5 @@
+from hashlib import blake2b
+
 import numpy as np
 import pandas as pd
 from numba import njit
@@ -102,40 +104,118 @@ def fastsimhash(hashes: pd.Series) -> pd.Series:
         # Merges list of integers (parts of fingerprint) into a single bytes Python value (the fingerprint)
         return fingerprint_list.tobytes()
 
-    return hashes.apply(fast_merge)
+    return hashes.apply(fast_merge)  # TODO: replace apply for list comprehension? ...maybe?
+
+
+# TODO: Refactor name
+def fastsimhash_test(hashes: list[bytes]) -> bytes:
+    """Helper function, bundles all the hashes into a matrix and calls *_numba_fastsimhash*.
+
+    Args:
+        byte_list (list[bytes]): list of hashes
+
+    Returns:
+        bytes: fingerprint
+    """
+    if hashes is None or len(hashes) == 0:
+        raise Exception("An empty byte_list has been passed to fast_merge")
+    n = len(hashes)
+    hash_len = len(hashes[0])  # Returns num of bytes in an hash
+    # Aggregates hashes into a matrix.
+    # byte_matrix[i][j] = j-th bit of hash i
+    byte_matrix = np.frombuffer(b"".join(hashes), dtype=np.uint8).reshape(n, hash_len)
+    fingerprint_list = _numba_fastsimhash(byte_matrix, n, hash_len)
+    # Merges list of integers (parts of fingerprint) into a single bytes Python value (the fingerprint)
+    return fingerprint_list.tobytes()
+
+
+# TODO: comments
+@pandas_udf(BinaryType())  # type: ignore
+def simhash_tf_idf(tokens: pd.Series, weights: pd.Series, fingerprint_size: pd.Series) -> pd.Series:
+    def compute(token_list: list[str], weight_list: list[float], fingerprint_size: int):
+        if token_list is None or len(token_list) == 0:
+            return None
+
+        if len(token_list) != len(weight_list):
+            return None
+
+        hashes = [
+            blake2b(token.encode(), digest_size=int(fingerprint_size / 8)).digest()
+            for token in token_list
+        ]
+
+        # Unpacks binary value as array of integers (each integer is a bit)
+        bit_arrays = [np.unpackbits(np.frombuffer(b, dtype=np.uint8)) for b in hashes]
+        bits_matrix = np.vstack(bit_arrays)
+        ints_matrix = np.where(bits_matrix == 1, 1, -1)  # Map 0 to -1 for negative weight
+
+        # Transform list to a vertical array (column)
+        weights_col = np.array(weight_list, dtype=np.float64)[:, np.newaxis]
+        weighted_matrix = ints_matrix * weights_col  # Matrix product
+
+        # Sum each column vertically
+        col_sum = weighted_matrix.sum(axis=0)
+
+        fingerprint_bits = (col_sum > 0).astype(np.uint8)  # Quantize
+
+        # Pack integers into a binary value
+        fingerprint = np.packbits(fingerprint_bits).tobytes()
+
+        return fingerprint
+
+    return pd.Series([compute(t, w, fs) for t, w, fs in zip(tokens, weights, fingerprint_size)])
+
+
+# TODO: Refactor name
+@pandas_udf(BinaryType())  # type: ignore
+def simhash_shingles_over_chars(
+    text: pd.Series, window_size: pd.Series, fingerprint_size: pd.Series
+) -> pd.Series:
+    def compute(text: str, window_size: int, fingerprint_size: int) -> bytes:
+        if not text or window_size >= len(text):
+            raise Exception("[simhash_shingles_over_chars]: invalid text or window_size")
+        shingles = [text[i : i + window_size] for i in range(len(text) - window_size + 1)]
+        # TODO: change with faster hash function
+        hashes = [
+            blake2b(shingle.encode(), digest_size=int(fingerprint_size / 8)).digest()
+            for shingle in shingles
+        ]
+        return fastsimhash_test(hashes=hashes)
+
+    return pd.Series([compute(t, ws, fs) for t, ws, fs in zip(text, window_size, fingerprint_size)])
 
 
 @pandas_udf(BinaryType())  # type: ignore
-def simhash(hashes: pd.Series) -> pd.Series:
-    """Reduces a list of hashes into a single hash.
-    Each bit of the result has is 1 iff at least half of the input hashes have value 1 in the same index, 0 otherwise.
+def simhash_shingles_over_words(
+    text: pd.Series, window_size: pd.Series, fingerprint_size: pd.Series
+) -> pd.Series:
+    def compute(text: str, window_size: int, fingerprint_size: int) -> bytes:
+        if not text or window_size >= len(text):
+            raise Exception("[simhash_shingles_over_words]: invalid text or window_size")
+        words = text.split()
+        shingles = [
+            "".join(words[i : i + window_size]) for i in range(len(words) - window_size + 1)
+        ]
+        hashes = [
+            blake2b(shingle.encode(), digest_size=int(fingerprint_size / 8)).digest()
+            for shingle in shingles
+        ]
+        return fastsimhash_test(hashes=hashes)
 
-    Args:
-        hashes (pd.Series): list of BinaryType hashes. All hashes must have the same length.
+    return pd.Series([compute(t, ws, fs) for t, ws, fs in zip(text, window_size, fingerprint_size)])
 
-    Returns:
-        pd.Series: a fingerprinta fingerprint, BinaryType.
-    """
 
-    def merge(byte_list):
-        if byte_list is None or len(byte_list) == 0:
-            return None
+@pandas_udf(BinaryType())  # type: ignore
+def simhash_bow(text: pd.Series, fingerprint_size: pd.Series) -> pd.Series:
+    def compute(text: str, fingerprint_size: int) -> bytes:
+        if not text:
+            raise Exception("[compute]: invalid text for bag_of_words")
+        tokens = text.split()
+        # TODO: change with faster hash function
+        hashes = [
+            blake2b(token.encode(), digest_size=int(fingerprint_size / 8)).digest()
+            for token in tokens
+        ]
+        return fastsimhash_test(hashes=hashes)
 
-        n = len(byte_list)
-
-        # Each hash is casted into an array of single bits
-        bit_arrays = [np.unpackbits(np.frombuffer(b, dtype=np.uint8)) for b in byte_list]
-
-        # Stacks the arrays vertically (row = hash index, col = bit index)
-        stacked = np.vstack(bit_arrays)
-
-        # Vertical sum
-        bit_sum = stacked.sum(axis=0)
-
-        fingerprint_bits = (bit_sum * 2 >= n).astype(np.uint8)
-
-        # Casts from array of bits to binary
-        fingerprint = np.packbits(fingerprint_bits).tobytes()
-        return fingerprint
-
-    return hashes.apply(merge)
+    return pd.Series([compute(t, fs) for t, fs in zip(text, fingerprint_size)])
