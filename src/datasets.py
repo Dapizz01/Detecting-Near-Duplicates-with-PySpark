@@ -55,20 +55,23 @@ def read_qqp_benchmark(benchmark_id: int):
 
 def read_feature_benchmark(which: str):
     # TODO: comments
-    assert which in ("easy", "hard")
+    assert which in ("easy", "medium", "hard")
     spark = get_spark()
     df = spark.read.csv(
         str(data_path(f"feature_benchmark_{which}.csv")),
         header=True,
         sep=",",
+        quote='"',
+        escape='"',
         inferSchema=True,
     )
     df = df.withColumn(
         "is_near_duplicate_semantic",
         F.when(F.col("is_near_duplicate_semantic") == 1, True).otherwise(False),
     )
-    df = df.withColumn(
-        "is_near_duplicate_syntax",
-        F.when(F.col("is_near_duplicate_syntax") == 1, True).otherwise(False),
-    )
+    if which != "hard":  # "Hard" dataset doesnt have syntax near-dup
+        df = df.withColumn(
+            "is_near_duplicate_syntax",
+            F.when(F.col("is_near_duplicate_syntax") == 1, True).otherwise(False),
+        )
     return df.withColumnsRenamed({"id": "ID"})
