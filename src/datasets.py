@@ -5,9 +5,6 @@ from src.config import data_path
 from src.spark_utils import get_spark
 
 
-# TODO: make balanced qqp benchmark
-# TODO: make larger dataset to test SimHash performance
-# TODO: make syntetic dataset to test near_duplicates matching performance
 def read_qqp() -> DataFrame:
     """Reads the Quora Question Pair dataset as a PySpark DataFrame.
 
