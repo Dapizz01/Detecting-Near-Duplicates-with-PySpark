@@ -118,7 +118,7 @@ def fastsimhash_test(hashes: list[bytes]) -> bytes:
         bytes: fingerprint
     """
     if hashes is None or len(hashes) == 0:
-        raise Exception("An empty byte_list has been passed to fast_merge")
+        raise Exception(hashes, "An empty byte_list has been passed to fast_merge")
     n = len(hashes)
     hash_len = len(hashes[0])  # Returns num of bytes in an hash
     # Aggregates hashes into a matrix.
@@ -172,9 +172,11 @@ def simhash_shingles_over_chars(
     text: pd.Series, window_size: pd.Series, fingerprint_size: pd.Series
 ) -> pd.Series:
     def compute(text: str, window_size: int, fingerprint_size: int) -> bytes:
-        if not text or window_size >= len(text):
-            raise Exception("[simhash_shingles_over_chars]: invalid text or window_size")
+        if text is None or window_size >= len(text) or not text.strip():
+            return b"0" * fingerprint_size
         shingles = [text[i : i + window_size] for i in range(len(text) - window_size + 1)]
+        if not shingles:
+            return b"0" * fingerprint_size
         # TODO: change with faster hash function
         hashes = [
             blake2b(shingle.encode(), digest_size=int(fingerprint_size / 8)).digest()
@@ -190,12 +192,14 @@ def simhash_shingles_over_words(
     text: pd.Series, window_size: pd.Series, fingerprint_size: pd.Series
 ) -> pd.Series:
     def compute(text: str, window_size: int, fingerprint_size: int) -> bytes:
-        if not text or window_size >= len(text):
-            raise Exception("[simhash_shingles_over_words]: invalid text or window_size")
+        if text is None or window_size >= len(text) or not text.strip():
+            return b"0" * fingerprint_size
         words = text.split()
         shingles = [
             "".join(words[i : i + window_size]) for i in range(len(words) - window_size + 1)
         ]
+        if not shingles:
+            return b"0" * fingerprint_size
         hashes = [
             blake2b(shingle.encode(), digest_size=int(fingerprint_size / 8)).digest()
             for shingle in shingles
@@ -208,9 +212,11 @@ def simhash_shingles_over_words(
 @pandas_udf(BinaryType())  # type: ignore
 def simhash_bow(text: pd.Series, fingerprint_size: pd.Series) -> pd.Series:
     def compute(text: str, fingerprint_size: int) -> bytes:
-        if not text:
-            raise Exception("[compute]: invalid text for bag_of_words")
-        tokens = text.split()
+        if text is None or not text.strip():
+            return b"0" * fingerprint_size
+        tokens = [x for x in text.split() if x]
+        if not tokens:
+            return b"0" * fingerprint_size
         # TODO: change with faster hash function
         hashes = [
             blake2b(token.encode(), digest_size=int(fingerprint_size / 8)).digest()

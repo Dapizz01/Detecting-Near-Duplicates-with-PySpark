@@ -44,6 +44,7 @@ def create_fingerprints(
         df.withColumn("cleaned_text", F.regexp_replace(F.col(input_col), r"[\n\r\t]", ""))
         .withColumn("cleaned_text", F.lower(F.col("cleaned_text")))
         .withColumn("cleaned_text", F.regexp_replace(F.col("cleaned_text"), r"[^a-z\s]", ""))
+        .dropna()
     )
     match model:
         case "bag_of_words":

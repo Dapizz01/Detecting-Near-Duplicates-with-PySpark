@@ -5,20 +5,52 @@ from src.config import data_path
 from src.spark_utils import get_spark
 
 
-def read_qqp() -> DataFrame:
+def read_atn_sampled() -> DataFrame:
+    spark = get_spark()
+    df = spark.read.csv(
+        str(data_path("all-the-news-sampled.csv")),
+        inferSchema=True,
+    )
+    return df.withColumnsRenamed({"id": "ID", "question1": "data1", "question2": "data2"})
+
+
+def read_wikipedia(variant: str) -> DataFrame:
+    spark = get_spark()
+    assert variant in ("5percent", "10percent")
+    df = spark.read.csv(
+        str(data_path(f"wikipedia_near_duplicate_{variant}.csv")), inferSchema=True, header=True
+    )
+    df = df.withColumn(
+        "is_dup",
+        F.when(F.col("is_near_duplicate") == 1, F.lit(True)).otherwise(F.lit(False)),
+    )
+    df = df.drop("is_near_duplicate")
+    return df.withColumnsRenamed(
+        {"id": "ID", "text": "data1", "text2": "data2", "is_dup": "is_near_duplicate"}
+    )
+
+
+def read_qqp(n: int) -> DataFrame:
     """Reads the Quora Question Pair dataset as a PySpark DataFrame.
 
     Returns:
         DataFrame: The QQP dataset, with the schema ("ID": int, "data1": string, "data2": string)
     """
     spark = get_spark()
-    df = spark.read.csv(
-        str(data_path("quora_duplicate_questions.tsv")),
-        header=True,
-        sep="\\t",
-        inferSchema=True,
+    df = (
+        spark.read.csv(
+            str(data_path("quora_duplicate_questions.tsv")),
+            header=True,
+            sep="\\t",
+            inferSchema=True,
+        )
+        .dropna()
+        .limit(n)
     )
-    df = df.drop("qid1", "qid2")
+    df = df.withColumn(
+        "is_near_duplicate", F.when(F.col("is_duplicate") == 1, F.lit(True)).otherwise(F.lit(False))
+    )
+    df = df.drop("qid1", "qid2", "is_duplicate")
     return df.withColumnsRenamed({"id": "ID", "question1": "data1", "question2": "data2"})
 
 

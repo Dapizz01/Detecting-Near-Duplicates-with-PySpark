@@ -8,70 +8,52 @@ from src.simhash import simhash_tf_idf
 def make_fingerprints(
     df: DataFrame, input_col: str, output_col: str, fingerprint_size: int
 ) -> DataFrame:
-    """Builds fingerprints using the TF-IDF (Term Frequency - Inverse Document Frequency) feature model.
-
-    Args:
-        df (DataFrame): input dataframe
-        input_col (str): input column name
-        output_col (str): output column name
-        fingerprint_size (int): size of each fingerprint, in bits
-
-    Returns:
-        DataFrame: output dataframe
-    """
     assert input_col in df.columns
 
+    # Tokenize words by space
     tokenizer = Tokenizer(inputCol=input_col, outputCol="words")
     df = tokenizer.transform(df)
 
-    # Incremental ID for each row
+    # Assign id to each row
     df = df.withColumn("_row_id", F.monotonically_increasing_id())
 
-    N = df.count()
+    # Explode words, creating a row for each word in words, with schema _row_id | word
+    df_exploded = df.select("_row_id", F.explode(F.col("words")).alias("word"))
 
-    # Schema: _row_id, pos (index of word in tokens), word
-    df_exploded = df.select("_row_id", F.posexplode(F.col("words")).alias("pos", "word"))
+    # Compute document frequency - how many documents contain a certain word
+    # Group by "word" and count distinct _row_id
+    df_count = df_exploded.groupBy("word").agg(F.count_distinct("_row_id").alias("df_count"))
 
-    # IDF - groups by word and counts how many different _row_id it has, then inverts it.
-    idf = (
-        df_exploded.select("_row_id", "word")
-        .distinct()
-        .groupby("word")
-        .agg(F.count("*").alias("df"))
-        .withColumn("idf", F.log(F.lit(N) / F.col("df")))
-    )
+    # Compute term frequency - how many times does a word appear in a document
+    # Count how many instances of ("_row_id", "word") there are in df_exploded
+    tf = df_exploded.groupBy("_row_id", "word").agg(F.count("*").alias("tf"))
 
-    # TF - group by (id, word) and count
-    tf = df_exploded.groupby("_row_id", "word").agg(F.count("*").alias("tf"))
+    total_docs = df.count()
 
-    # TF-IDF - joins tf with idf
-    tf_idf = tf.join(F.broadcast(idf), on="word").withColumn("tf_idf", F.col("tf") * F.col("idf"))
+    # Join TF and DF (document frequency) by "word" - now each _row_id | word has their own TF and DF
+    # Then, compute TF-IDF, inverting DF into IDF and then multiplying TF and IDF
+    tf_idf = tf.join(F.broadcast(df_count), "word")
+    tf_idf = tf_idf.withColumn("tf_idf", F.col("tf") * F.log(F.lit(total_docs) / F.col("df_count")))
 
-    # Matches every term with its computed TF-IDF
-    weighted = df_exploded.join(tf_idf.select("_row_id", "word", "tf_idf"), on=["_row_id", "word"])
+    # Aggregate by _row_id, making a "terms" column whose type is list[struct]
+    # Trick: F.struct "merges" columns into a struct, while F.collect_list transforms structs into lists
+    agg = tf_idf.groupBy("_row_id").agg(F.collect_list(F.struct("word", "tf_idf")).alias("terms"))
 
-    # Aggregates data back into a list, using a struct to preserve the rows
-    agg = weighted.groupby("_row_id").agg(
-        F.sort_array(F.collect_list(F.struct("pos", "word", "tf_idf"))).alias("items")
-    )
-    agg = (
-        agg.withColumn("tokens_ordered", F.col("items.word"))
-        .withColumn("tf_idf_ordered", F.col("items.tf_idf"))
-        .drop("items")
-    )
+    # Unwrap struct
+    agg = agg.withColumn("tokens", F.col("terms.word"))
+    agg = agg.withColumn("tf_idf", F.col("terms.tf_idf"))
 
-    # Join original df with the aggregated one
-    df = df.join(agg, on="_row_id")
+    # Join original DataFrame with "agg" DataFrame, by _row_id
+    df = df.join(agg, "_row_id", "left")
 
-    df = df.withColumn("fingerprint_size", F.lit(fingerprint_size))
     df = df.withColumn(
         output_col,
-        simhash_tf_idf(  # type: ignore
-            F.col("tokens_ordered"),  # type: ignore
-            F.col("tf_idf_ordered"),  # type: ignore
-            F.col("fingerprint_size"),  # type: ignore
+        simhash_tf_idf(
+            F.col("tokens"),  # type: ignore
+            F.col("tf_idf"),  # type: ignore
+            F.lit(fingerprint_size),  # type: ignore
         ),
     )
-    df = df.drop("words", "tokens_ordered", "tf_idf_ordered", "fingerprint_size", "_row_id")
+    df = df.drop("words", "tokens", "tf_idf", "_row_id")
 
     return df

@@ -1,5 +1,6 @@
 from typing import Iterator
 
+import numpy as np
 import pandas as pd
 import pyspark.sql.functions as F
 import requests
@@ -23,22 +24,18 @@ def get_embeddings(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
         Iterator[pd.Series]: output batch
     """
 
-    def list_to_bin(vals: list[str]) -> bytes:
-        if not vals:
+    # TODO: implement sanity check (strings must be lower than a threshold, otherwise memory usage goes through the roof)
+    def quantize(embedding: list[float]) -> bytes:
+        if not embedding:
             return b""
-        num = int("".join(vals), 2)
-        length = (len(vals) + 7) // 8
-        return num.to_bytes(length, byteorder="big")
-
-    def quantize(embeddings: list[float]) -> list[str]:
-        return ["0" if val < 0 else "1" for val in embeddings]
+        arr = np.array(embedding, dtype=np.float32)
+        return np.packbits(arr >= 0).tobytes()
 
     # Ollama provides a handy Python API for queries, but it's not usable
     # in a Conda environment, because the embedding model is hosted in the base environment.
     # As a workaround, the HTTP API are used here.
     session = requests.Session()
 
-    # TODO: comment
     for series in iterator:
         text_list = series.tolist()
         embeddings = []
@@ -53,9 +50,7 @@ def get_embeddings(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
                 data = response.json()
                 batch_res = data.get("embeddings", [])
 
-                batch_embeddings = [quantize(emb) for emb in batch_res]
-                # Output: [["0", "1", ...], [...], ...]
-                embeddings.extend([list_to_bin(emb) for emb in batch_embeddings])
+                embeddings.extend([quantize(emb) for emb in batch_res])
                 # Output: [b"\x01\x02", b"...", ...]
             except Exception as e:
                 print(f"Error while generating the embeddings: {e}")

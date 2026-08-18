@@ -4,7 +4,9 @@
 
 data/*
 !data/.gitkeep
+
 results/*
+!results/*.png
 
 spark-warehouse/
 metastore_db/
