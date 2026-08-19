@@ -5,8 +5,7 @@
 data/*
 !data/.gitkeep
 
-results/*
-!results/*.png
+results/roadmap.md
 
 spark-warehouse/
 metastore_db/

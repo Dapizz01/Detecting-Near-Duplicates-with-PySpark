@@ -5,6 +5,17 @@ from src.config import data_path
 from src.spark_utils import get_spark
 
 
+def read_paws() -> DataFrame:
+    spark = get_spark()
+    df = spark.read.csv(str(data_path("paws.csv")), inferSchema=True, header=True)
+    df = df.withColumn(
+        "is_near_duplicate",
+        F.when(F.col("label") == 1, F.lit(True)).otherwise(F.lit(False)),
+    )
+    df = df.drop("label")
+    return df.withColumnsRenamed({"id": "ID", "sentence1": "data1", "sentence2": "data2"})
+
+
 def read_atn_sampled() -> DataFrame:
     spark = get_spark()
     df = spark.read.csv(
