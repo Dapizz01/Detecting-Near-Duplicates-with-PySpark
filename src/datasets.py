@@ -5,6 +5,13 @@ from src.config import data_path
 from src.spark_utils import get_spark
 
 
+def read_synthetic() -> DataFrame:
+    spark = get_spark()
+    df = spark.read.csv(str(data_path("synthetic.csv")), header=True)
+    df = df.withColumn("fingerprint", F.unhex(F.lpad(F.conv(F.col("fingerprint"), 2, 16), 16, "0")))
+    return df
+
+
 def read_paws() -> DataFrame:
     spark = get_spark()
     df = spark.read.csv(str(data_path("paws.csv")), inferSchema=True, header=True)

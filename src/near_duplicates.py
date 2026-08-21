@@ -3,6 +3,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
 from pyspark.sql.types import IntegerType
 
+from src.fingerprint import FINGERPRINT_SIZES
 from src.metrics import Metrics, extract_metrics
 
 
@@ -70,5 +71,101 @@ def near_duplicates_benchmark(
     return extract_metrics(df, test_col="computed_near_duplicate", truth_col=truth_col)
 
 
-def near_duplicates(df: DataFrame, query: DataFrame, K: int) -> DataFrame:
+def near_duplicates_optimized(
+    df: DataFrame,
+    query: DataFrame,
+    id_col: str,
+    df_fingerprint_col: str,
+    query_fingerprint_col: str,
+    fingerprint_size: int,
+    K: int,
+    broadcast: bool,
+    max_tables: int = 256,
+    per_table_overhead: float = 1.0,
+) -> DataFrame:
     return df
+
+
+def near_duplicates(
+    df: DataFrame,
+    query: DataFrame,
+    id_col: str,
+    df_fingerprint_col: str,
+    query_fingerprint_col: str,
+    fingerprint_size: int,
+    K: int,
+    broadcast: bool,
+    optimized: bool,
+) -> DataFrame:
+    assert df.count() > 0
+    assert query.count() > 0
+    assert df_fingerprint_col in df.columns
+    assert id_col in df.columns
+    assert query_fingerprint_col in query.columns
+    assert id_col in query.columns
+    assert fingerprint_size in FINGERPRINT_SIZES
+
+    def partition_tables(fingerprint_size: int, n_partitions: int) -> list:
+        base, remainder = divmod(fingerprint_size, n_partitions)
+        sizes = [base + 1 if i < remainder else base for i in range(n_partitions)]
+        carry = 0
+        partitions = []
+        for s in sizes:
+            partitions.append([carry, s])
+            carry += s
+        return partitions
+
+    nd_df = df
+    if not optimized:
+        nd_df = (
+            df.alias("a")
+            .crossJoin(query.select(query_fingerprint_col).alias("b"))
+            .select(
+                F.col(id_col),
+                F.col(f"a.{df_fingerprint_col}").alias("f1"),
+                F.col(f"b.{query_fingerprint_col}").alias("f2"),
+            )
+        )
+        nd_df = near_duplicates_pairs(nd_df, "f1", "f2", K=K)
+    else:
+        # K = 2 -> 3 blocks
+        # K = 3 -> 4 blocks
+        #
+        if K < int(fingerprint_size / 4):
+            df_chunks = [
+                F.substring(F.col(df_fingerprint_col), i, 1)
+                for i in range(1, int(fingerprint_size / 8) + 1)
+            ]
+            query_chunks = [
+                F.substring(F.col(query_fingerprint_col), i, 1)
+                for i in range(1, int(fingerprint_size / 8) + 1)
+            ]
+
+            df_join = df.select(
+                id_col, df_fingerprint_col, F.posexplode(F.array(*df_chunks)).alias("pos", "chunk")
+            )
+            query_join = query.select(
+                id_col,
+                query_fingerprint_col,
+                F.posexplode(F.array(*query_chunks)).alias("pos", "chunk"),
+            )
+
+            join_result = (
+                df_join.alias("a")
+                .join(F.broadcast(query_join).alias("b"), on=["pos", "chunk"])
+                .select(
+                    F.col(f"a.{df_fingerprint_col}").alias("f1"),
+                    F.col(f"b.{query_fingerprint_col}").alias("f2"),
+                )
+                .drop_duplicates(["f1", "f2"])
+            )
+
+            join_result.show()
+            nd_df = near_duplicates_pairs(join_result, f1="f1", f2="f2", K=K)
+
+        else:  # Multi-Index Hashing
+            pass
+
+        pass
+
+    return nd_df
