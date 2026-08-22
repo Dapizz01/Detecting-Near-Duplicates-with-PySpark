@@ -1,0 +1,49 @@
+---
+title: "Reproducing \"Near-Duplicate Detection for Web Crawling\""
+author:
+  - name: ToDo
+date: 2026-08-01
+abstract: |
+    This paper aims to reproduce the findings of the "Near-Duplicate Detection for Web Crawling" work, using PySpark to scale the proposed algorithm, under different datasets, feature models and K values.
+keywords: [near-duplicate detection, nlp, feature extraction, big data, pyspark]
+format:
+  typst:
+    papersize: a4
+    fontsize: 11pt
+    margin:
+      x: 1in
+      y: 1.25in
+    columns: 2             # uncomment for a two-column paper look
+# number-sections: true        # numbered sections: 1, 1.1, 2 ...
+bibliography: references.bib
+execute:
+  echo: false
+  warning: false
+  message: false
+fig-align: center
+---
+
+# Introduction
+
+Two documents are considered near-duplicates if they are similar to each other.
+An efficient and optimized algorithm for near-duplicates detection in a dataset is crucial for tasks like web crawling and, recently, cleaning datasets for AI models training. 
+Manku et al. paper suggests to extract features from documents, compute the aggregated fingerprint using Charikar's Simhash and lastly compare fingerprints looking only at a specific partition of bits, for every partition.
+This paper reproduces the central claims of [@original_paper] and analyzes its performance under different datasets, feature models and K values.
+
+# Related work
+This is the related work section.
+
+# Setup
+This is the setup section.
+
+# Methodology
+This is the methodology section.
+
+# Results
+This is the results section.
+
+# Discussion
+This is the discussion section.
+
+# Conclusion
+This is the conclusion section.

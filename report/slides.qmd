@@ -1,0 +1,12 @@
+---
+title: "Reproducing \"Near-Duplicate Detection for Web Crawling\""
+format: revealjs
+---
+
+## Results
+
+This is just a test.
+
+## Another slide
+This is the result:
+![](../results/paws/f1score_confusionmatrix.png)

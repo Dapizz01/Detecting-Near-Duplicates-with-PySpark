@@ -1,7 +1,12 @@
+import math
+from functools import reduce
+from itertools import combinations
+from typing import List, Tuple
+
 import pandas as pd
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
-from pyspark.sql.types import IntegerType
+from pyspark.sql.types import BinaryType, IntegerType
 
 from src.fingerprint import FINGERPRINT_SIZES
 from src.metrics import Metrics, extract_metrics
@@ -71,6 +76,65 @@ def near_duplicates_benchmark(
     return extract_metrics(df, test_col="computed_near_duplicate", truth_col=truth_col)
 
 
+def _partition_blocks(fingerprint_size: int, n_blocks: int) -> List[Tuple[int, int]]:
+    base, remainder = divmod(fingerprint_size, n_blocks)
+    sizes = [base + 1 if i < remainder else base for i in range(n_blocks)]
+    blocks = []
+    carry = 0
+    for s in sizes:
+        blocks.append((carry, s))
+        carry += s
+    return blocks
+
+
+def _block_combinations(n_blocks: int, K: int) -> List[Tuple[int, ...]]:
+    if n_blocks <= K:
+        raise ValueError()
+    r = n_blocks - K
+    return list(combinations(range(n_blocks), r))
+
+
+# TODO: add return type hint
+def _make_bit_key_udf(bit_ranges: List[Tuple[int, int]], fingerprint_size: int):
+    key_len_bits = sum(length for _, length in bit_ranges)
+    key_len_bytes = (key_len_bits + 7) // 8
+
+    def extract(fp: bytes):
+        if fp is None:
+            return None
+        val = int.from_bytes(fp, "big")
+        key_val = 0
+        for start, length in bit_ranges:
+            shift = fingerprint_size - start - length
+            mask = (1 << length) - 1
+            key_val = (key_val << length) | ((val >> shift) & mask)
+        return key_val.to_bytes(key_len_bytes, "big")
+
+    @F.pandas_udf(BinaryType())  # type: ignore
+    def bit_key(col: pd.Series) -> pd.Series:
+        return pd.Series([extract(fp) for fp in col], dtype="object")
+
+    return bit_key
+
+
+def _optimal_n_blocks(
+    fingerprint_size: int, K: int, d: float, max_tables: int = 256, per_table_overhead: float = 1.0
+) -> int:
+    best_m, best_cost = None, math.inf
+    for m in range(K + 1, fingerprint_size + 1):
+        t = math.comb(m, m - K)
+        if t > max_tables:
+            break
+        p_i = ((m - K) * fingerprint_size) // m
+        expected_candidates = 2 ** (d - p_i)
+        cost = t * (per_table_overhead + expected_candidates)
+        if cost < best_cost:
+            best_m, best_cost = m, cost
+    if best_m is None:
+        raise ValueError()
+    return best_m
+
+
 def near_duplicates_optimized(
     df: DataFrame,
     query: DataFrame,
@@ -83,7 +147,47 @@ def near_duplicates_optimized(
     max_tables: int = 256,
     per_table_overhead: float = 1.0,
 ) -> DataFrame:
-    return df
+    # TODO: asserts
+    d = math.log2(max(df.count(), 1))
+    n_blocks = _optimal_n_blocks(
+        fingerprint_size=fingerprint_size,
+        K=K,
+        d=d,
+        max_tables=max_tables,
+        per_table_overhead=per_table_overhead,
+    )
+    blocks = _partition_blocks(fingerprint_size=fingerprint_size, n_blocks=n_blocks)
+    combos = _block_combinations(n_blocks=n_blocks, K=K)
+
+    results = []
+    for combo in combos:
+        bit_ranges = [blocks[i] for i in combo]
+        key_udf = _make_bit_key_udf(bit_ranges=bit_ranges, fingerprint_size=fingerprint_size)
+
+        df_table = df.select(
+            id_col,
+            F.col(df_fingerprint_col).alias("f1"),
+            key_udf(F.col(df_fingerprint_col)).alias("block_key"),  # type: ignore
+        )
+
+        query_table = query.select(
+            id_col,
+            F.col(query_fingerprint_col).alias("f2"),
+            key_udf(F.col(query_fingerprint_col)).alias("block_key"),  # type: ignore
+        )
+
+        if broadcast:
+            query_table = F.broadcast(query_table)
+
+        join_result = (
+            df_table.alias("a")
+            .join(query_table.alias("b"), on="block_key")
+            .select(F.col("a.f1"), F.col("b.f2"))
+        )
+        results.append(join_result)
+
+    candidates = reduce(lambda a, b: a.unionByName(b), results).drop_duplicates(["f1", "f2"])
+    return near_duplicates_pairs(candidates, f1="f1", f2="f2", K=K)
 
 
 def near_duplicates(
@@ -128,44 +232,15 @@ def near_duplicates(
         )
         nd_df = near_duplicates_pairs(nd_df, "f1", "f2", K=K)
     else:
-        # K = 2 -> 3 blocks
-        # K = 3 -> 4 blocks
-        #
-        if K < int(fingerprint_size / 4):
-            df_chunks = [
-                F.substring(F.col(df_fingerprint_col), i, 1)
-                for i in range(1, int(fingerprint_size / 8) + 1)
-            ]
-            query_chunks = [
-                F.substring(F.col(query_fingerprint_col), i, 1)
-                for i in range(1, int(fingerprint_size / 8) + 1)
-            ]
-
-            df_join = df.select(
-                id_col, df_fingerprint_col, F.posexplode(F.array(*df_chunks)).alias("pos", "chunk")
-            )
-            query_join = query.select(
-                id_col,
-                query_fingerprint_col,
-                F.posexplode(F.array(*query_chunks)).alias("pos", "chunk"),
-            )
-
-            join_result = (
-                df_join.alias("a")
-                .join(F.broadcast(query_join).alias("b"), on=["pos", "chunk"])
-                .select(
-                    F.col(f"a.{df_fingerprint_col}").alias("f1"),
-                    F.col(f"b.{query_fingerprint_col}").alias("f2"),
-                )
-                .drop_duplicates(["f1", "f2"])
-            )
-
-            join_result.show()
-            nd_df = near_duplicates_pairs(join_result, f1="f1", f2="f2", K=K)
-
-        else:  # Multi-Index Hashing
-            pass
-
-        pass
+        nd_df = near_duplicates_optimized(
+            df=df,
+            query=query,
+            id_col=id_col,
+            df_fingerprint_col=df_fingerprint_col,
+            query_fingerprint_col=query_fingerprint_col,
+            fingerprint_size=fingerprint_size,
+            K=K,
+            broadcast=broadcast,
+        )
 
     return nd_df

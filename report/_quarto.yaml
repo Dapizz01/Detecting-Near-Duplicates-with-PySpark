@@ -1,0 +1,10 @@
+project:
+  type: default
+  render:
+    - report.qmd
+    - slides.qmd
+
+execute:
+  echo: false
+
+bibliography: references.bib
