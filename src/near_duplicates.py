@@ -1,14 +1,12 @@
 import math
-from functools import reduce
-from itertools import combinations
-from typing import List, Tuple
+from functools import lru_cache
+from typing import List
 
 import pandas as pd
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
 from pyspark.sql.types import BinaryType, IntegerType
 
-from src.fingerprint import FINGERPRINT_SIZES
 from src.metrics import Metrics, extract_metrics
 
 
@@ -76,6 +74,7 @@ def near_duplicates_benchmark(
     return extract_metrics(df, test_col="computed_near_duplicate", truth_col=truth_col)
 
 
+"""
 def _partition_blocks(fingerprint_size: int, n_blocks: int) -> List[Tuple[int, int]]:
     base, remainder = divmod(fingerprint_size, n_blocks)
     sizes = [base + 1 if i < remainder else base for i in range(n_blocks)]
@@ -94,7 +93,6 @@ def _block_combinations(n_blocks: int, K: int) -> List[Tuple[int, ...]]:
     return list(combinations(range(n_blocks), r))
 
 
-# TODO: add return type hint
 def _make_bit_key_udf(bit_ranges: List[Tuple[int, int]], fingerprint_size: int):
     key_len_bits = sum(length for _, length in bit_ranges)
     key_len_bytes = (key_len_bits + 7) // 8
@@ -147,7 +145,6 @@ def near_duplicates_optimized(
     max_tables: int = 256,
     per_table_overhead: float = 1.0,
 ) -> DataFrame:
-    # TODO: asserts
     d = math.log2(max(df.count(), 1))
     n_blocks = _optimal_n_blocks(
         fingerprint_size=fingerprint_size,
@@ -244,3 +241,130 @@ def near_duplicates(
         )
 
     return nd_df
+"""
+
+
+# TODO: it doesn't seem to work well on some inputs
+def estimate_optimal_schema(f: int, K: int, d: int, p_min: int) -> tuple[int, list[dict]]:
+    """Estimates the optimal join schema to find near-duplicates.
+    Can return multiple schemas, to be applied sequentially.
+
+    Args:
+        f (int): Length of fingerprints in bits
+        K (int): Maximum hamming distance allowed
+        d (int): Number of fingerprints (in log2)
+        p_min (int): Maximum number of candidate fingerprints (in log2)
+
+    Raises:
+        ValueError: Instances for which there doesn't exist a schema - a cartesian product is required.
+
+    Returns:
+        tuple[int, list[dict]]: Computed schema
+    """
+
+    @lru_cache(maxsize=None)
+    def X(f: int, d: int) -> tuple[int, list[dict]]:
+        # Terminate, the candidates are already small enough,
+        # there's no need to partition further
+        if d <= p_min:
+            return 1, []
+        best: tuple[int, list[dict]] | None = None
+        # "r" is the number of partitions
+        # Needs to be bigger than K, but no more than half the fingerprint length (block_bits = 2)
+        for r in range(K + 1, f // 2):
+            # Bits for each block (rounded down, blocks can have different number of bits)
+            block_bits = f // r
+            # Possible combinations (without repetition) for this partition schema
+            tables_comb = math.comb(r, K)
+            # Recursive call to X
+            sub_cost, sub_params = X(K * block_bits, d - ((r - K) * block_bits))
+            cost = tables_comb * sub_cost
+            params = [
+                {"f": f, "d": d, "r": r, "block_bits": block_bits, "tables": tables_comb},
+                *sub_params,
+            ]
+            if best is None or cost < best[0]:
+                best = (cost, params)
+        if best is None:
+            raise ValueError(
+                f"It's impossible to determine the optimal schema for f: {f} and d: {d}"
+            )
+        return best
+
+    return X(f=f, d=d)
+
+
+def build_tables(
+    df: DataFrame, fingerprint_col: str, fingerprint_size: int, num_tables: int
+) -> DataFrame:
+    schema: List[int] = []
+
+    # Splits fs into n parts evenly, putting larger blocks first
+    def apply_table_schema(fs: int, n: int):
+        base, remainder = divmod(fs, n)
+        return [base + 1 if i < remainder else base for i in range(n)]
+
+    # Split fingeprints into tokens, reading the schema from the container function
+    @F.pandas_udf(BinaryType())  # type: ignore
+    def helper(fingerprints: pd.Series) -> pd.Series:
+        # TODO: implement, split fingerprints as schema specifies, then packbits
+        print(schema)
+        return fingerprints
+
+    assert fingerprint_col in df.columns
+    schema = apply_table_schema(fs=fingerprint_size, n=num_tables)
+    df = df.withColumn("tokens", helper(F.col(fingerprint_col)))  # type: ignore
+    df = df.select("*", F.posexplode("tokens").alias("token_id", "token"))
+    return df
+
+
+'''
+def optimal_design(
+    f: int, k: int, d: int, p_min: int, *, nibble: bool = False
+) -> tuple[int, list[dict]]:
+    """
+    Like optimal_table_count, but also returns the chosen decomposition:
+    a list of levels [{f, d, tau, block_bits, tables_at_this_level}, ...]
+    ordered outermost-first. Total tables = product of tables_at_level.
+
+    Returns (total_tables, levels).
+    """
+
+    @lru_cache(maxsize=None)
+    def X(f: int, d: int) -> tuple[int, list[dict]]:
+        if d <= p_min:
+            return 1, []
+
+        best: tuple[int, list[dict]] | None = None
+        for tau in _divisors_at_least(f, k + 1):
+            block = f // tau
+            if nibble and block % 4 != 0:
+                continue
+            f_next, d_next = block * k, max(d - (tau - k) * block, 0)
+            if f_next < 1:
+                continue
+            sub_cost, sub_levels = X(f_next, d_next)
+            cost, levels = (
+                math.comb(tau, k) * sub_cost,
+                [
+                    {"f": f, "d": d, "tau": tau, "block_bits": block, "tables": math.comb(tau, k)},
+                    *sub_levels,
+                ],
+            )
+            if best is None or cost < best[0]:
+                best = (cost, levels)
+        if best is None:
+            raise ValueError(f"no valid decomposition for f={f}, k={k}")
+        return best
+
+    return X(f, d)
+'''
+
+
+# Make function that chops fingerprints given a schema and posexplodes them
+
+# Make function that prepares the fingerprint database, creating schema and tables, saving it on disk if it's not there already.
+
+# Make function that prepares the query
+
+# Make function that joins database and query, dropping duplicates and checking K distance.

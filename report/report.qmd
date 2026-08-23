@@ -28,16 +28,21 @@ fig-align: center
 Two documents are considered near-duplicates if they are similar to each other.
 An efficient and optimized algorithm for near-duplicates detection in a dataset is crucial for tasks like web crawling and, recently, cleaning datasets for AI models training. 
 Manku et al. paper suggests to extract features from documents, compute the aggregated fingerprint using Charikar's Simhash and lastly compare fingerprints looking only at a specific partition of bits, for every partition.
-This paper reproduces the central claims of [@original_paper] and analyzes its performance under different datasets, feature models and K values.
+This paper reproduces the central claims of [@original_paper] and analyzes its performance under different datasets, feature models, fingerprint sizes and K values.
 
 # Related work
 This is the related work section.
 
+# Methodology
+The proposed implementation is slightly different from [@original_paper]:
+
+## Feature model
+- The original paper suggest some possible feature models for feature extraction, choosing a document vector model (TF-IDF). In this work, four different feature models are implemented and compared: TF-IDF, Shingles, Bag Of Words and Embeddings.
+- Fingerprints compression algorithm can't be implemented in PySpark: it requires control over data distribuition between executors, which is handled by the Spark engine. Also, this removes the need to sort fingerprints.
+- Join operations are performed using PySpark's Broadcast Hash Join.
+
 # Setup
 This is the setup section.
-
-# Methodology
-This is the methodology section.
 
 # Results
 This is the results section.
