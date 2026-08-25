@@ -1,10 +1,10 @@
 ---
 title: "Reproducing \"Near-Duplicate Detection for Web Crawling\""
 author:
-  - name: ToDo
+  - name: Name Surname
 date: 2026-08-01
 abstract: |
-    This paper aims to reproduce the findings of the "Near-Duplicate Detection for Web Crawling" work, using PySpark to scale the proposed algorithm, under different datasets, feature models and K values.
+    This paper aims to reproduce the findings of the "Near-Duplicate Detection for Web Crawling" work, using PySpark to scale the proposed algorithm, under different datasets, feature models and parameters.
 keywords: [near-duplicate detection, nlp, feature extraction, big data, pyspark]
 format:
   typst:
@@ -24,25 +24,50 @@ fig-align: center
 ---
 
 # Introduction
-
+Detecting duplicates in a dataset is crucial for tasks like web crawlers or AI model training, freeing compute power.
+In order to solve this, intuitively, it's possible to hash data and compare all rows using a cartesian product.
+This approach is fragile - tiny changes between data will produce wildly different hashes, which is undesirable.
+Moreover, the time complexity for a cartesian product is $O(n^2)$, which is untractable for large datasets.
+Manku et al. approach [@original_paper] suggest to look for near duplicates.
+It aims to produce similar hashes for similar data, while providing optimization for the comparison algorithm.
+Their feature model proposals are benchmarked against the PAWS dataset [@paws], a corpus of paraphrased sentences, and a synthetic Wikipedia dataset [@wikipedia_dataset].
+Lastly, their algorithm is ran on a subset of the C5 dataset [@c5], a collection of web crawls.
+<!--
 Two documents are considered near-duplicates if they are similar to each other.
-An efficient and optimized algorithm for near-duplicates detection in a dataset is crucial for tasks like web crawling and, recently, cleaning datasets for AI models training. 
-Manku et al. paper suggests to extract features from documents, compute the aggregated fingerprint using Charikar's Simhash and lastly compare fingerprints looking only at a specific partition of bits, for every partition.
-This paper reproduces the central claims of [@original_paper] and analyzes its performance under different datasets, feature models, fingerprint sizes and K values.
-
-# Related work
-This is the related work section.
+An efficient and optimized algorithm for near-duplicates detection in a large dataset is crucial for tasks like web crawling, antivirus softwares and AI model training. 
+Intuitively, a cartesian product can solve this issue, but its time complexity skyrockets even for small datasets.
+Manku et al. [@original_paper] suggest to extract features from documents, compute the aggregated fingerprint using Charikar's Simhash and then compare fingerprints looking only at a specific partition of bits, for every partition.
+This paper reproduces the central claims of [@original_paper], and analyzes its performance under different datasets, feature models and parameters. -->
 
 # Methodology
-The proposed implementation is slightly different from [@original_paper]:
+Manku et al. [@original_paper] proposal can be split into a two part pipeline.
 
-## Feature model
-- The original paper suggest some possible feature models for feature extraction, choosing a document vector model (TF-IDF). In this work, four different feature models are implemented and compared: TF-IDF, Shingles, Bag Of Words and Embeddings.
-- Fingerprints compression algorithm can't be implemented in PySpark: it requires control over data distribuition between executors, which is handled by the Spark engine. Also, this removes the need to sort fingerprints.
-- Join operations are performed using PySpark's Broadcast Hash Join.
+## Fingerprint Generation
+The target of this first phase is to transform text into binary values of fixed length, called *fingerprints*.
+More specifically, to similar data must corrispond similar fingerprints (i.e. their hamming distance is low).
+In order to do this, Charikar's SimHash [@simhash] is used: each text is converted into a set of fixed length binary values called *features*,
+which are then assembled into a single binary value of the same size - a fingerprint.
+Choosing the correct feature model and fingerprint size for a dataset is important.
+The original paper proposes different feature models like *Shingles* and *TF-IDF*, ultimately choosing the latter, with a fingerprint size of 64 bits.
+In this work, four feature models are tested and compared: *Shingles*, *TF-IDF*, *Bag of Words* and *Embeddings*, with fingerprint sizes from 32 bits up to 512 bits.
 
-# Setup
-This is the setup section.
+### Shingles
+...
+
+### TF-IDF
+...
+
+### Bag of Words
+...
+
+### Embeddings
+...
+
+## Fingerprint Aggregation
+...
+
+# Implementation
+This implementation leverages the PySpark [@pyspark] framework, which allows to scale computing resources seamlessly.
 
 # Results
 This is the results section.

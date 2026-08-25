@@ -29,16 +29,7 @@ def near_duplicates_pairs(df: DataFrame, f1: str, f2: str, K: int) -> DataFrame:
         "hamming_distance",
         hamming_distance_bin(F.col(f1), F.col(f2)),  # type: ignore
     ).filter(F.col("hamming_distance") <= K)
-    """
-    df = df.withColumn(
-        "computed_near_duplicate",
-        F.when(
-            F.col("hamming_distance") <= K,  # type: ignore
-            F.lit(True),
-        ).otherwise(F.lit(False)),
-    )
-    """
-    return df.drop("hamming_distance")
+    return df  # .drop("hamming_distance")
 
 
 # TODO: finish (and update) docstring
@@ -128,13 +119,13 @@ def estimate_optimal_schema(f: int, K: int, d: int, p_min: int) -> tuple[int, li
     return X(f=f, d=d)
 
 
-def build_tables(
+def build_partitions_dataframe(
     df: DataFrame, fingerprint_col: str, fingerprint_size: int, K: int, num_tables: int
 ) -> DataFrame:
     schema: List[int] = []
 
     # Splits fs into n parts evenly, putting larger blocks first
-    def apply_table_schema(fs: int, n: int):
+    def apply_partition_schema(fs: int, n: int):
         base, remainder = divmod(fs, n)
         return [base + 1 if i < remainder else base for i in range(n)]
 
@@ -160,12 +151,12 @@ def build_tables(
 
     assert fingerprint_col in df.columns
     combos = list(itertools.combinations([i for i in range(num_tables)], num_tables - K))
-    schema = apply_table_schema(fs=fingerprint_size, n=num_tables)
+    schema = apply_partition_schema(fs=fingerprint_size, n=num_tables)
     df = df.withColumn("tokens", helper(F.col(fingerprint_col)))  # type: ignore
     return df.select(
         "*",
         F.posexplode(
-            F.array(*[F.array(F.col("tokens")[a], F.col("tokens")[b]) for a, b in combos])
+            F.array(*[F.array(*[F.col("tokens")[i] for i in combo]) for combo in combos])
         ).alias("token_id", "token"),
     )
 
@@ -181,37 +172,36 @@ def near_duplicate_batch(
     K: int,
 ) -> DataFrame:
     corpus_size = corpus.count()
-    """
-    schema = estimate_optimal_schema(
-        f=fingerprint_size, K=K, d=int(math.log(corpus_size, 2)), p_min=10
-    )
-    """
     # TODO: use other schema function
     schema = optimal_design(f=fingerprint_size, k=K, d=int(math.log(corpus_size, 2)), p_min=10)
     if schema[0] == 1:
+        # It's not possible to partition the fingerprints, and a cartesian product might be too expensive
         raise NotImplementedError(f"Need to do a cartesian product, the schema is {schema}")
     num_partitions = schema[1][0]["tau"]  # TODO: ugly, fix this
-    corpus_tables = build_tables(
+    corpus_exploded = build_partitions_dataframe(
         df=corpus,
         fingerprint_col=corpus_fp_col,
         fingerprint_size=fingerprint_size,
         K=K,
         num_tables=num_partitions,
     )
-    query_tables = build_tables(
+    query_exploded = build_partitions_dataframe(
         df=query,
         fingerprint_col=query_fp_col,
         fingerprint_size=fingerprint_size,
         K=K,
         num_tables=num_partitions,
-    )  # .drop(query_fp_col)
+    )
 
+    # Join corpus and query, finding common tokens
+    # (both token and token_id must be equal)
     near_dups = (
-        corpus_tables.alias("a")
+        corpus_exploded.alias("a")
         .join(
-            query_tables.alias("b"),
+            query_exploded.alias("b"),
             (F.col("a.token") == F.col("b.token")) & (F.col("a.token_id") == F.col("b.token_id")),
         )
+        # Prevents duplicates
         .where(F.col(f"a.{corpus_id_col}") < F.col(f"b.{query_id_col}"))
         .select(
             F.col(f"a.{corpus_id_col}").alias("id1"),
@@ -222,7 +212,54 @@ def near_duplicate_batch(
     )
 
     # print(corpus_tables.groupBy("token").count().sort(F.col("count").desc()).show())
-    return near_duplicates_pairs(near_dups, f1="fingerprint1", f2="fingerprint2", K=K)
+    return near_duplicates_pairs(near_dups, f1="fingerprint1", f2="fingerprint2", K=K).distinct()
+
+
+# TODO: for now, this function can't make nested partitions. Is this fine, or should this be fixed?
+# Either way, it needs to be pointed out.
+def near_duplicate_mirror(
+    df: DataFrame,
+    df_fp_col: str,
+    df_id_col: str,
+    fingerprint_size: int,
+    K: int,
+) -> DataFrame:
+    df_size = df.count()
+    # TODO: use other schema function
+    schema = optimal_design(f=fingerprint_size, k=K, d=int(math.log(df_size, 2)), p_min=10)
+    if schema[0] == 1:
+        # It's not possible to partition the fingerprints, and a cartesian product might be too expensive
+        raise NotImplementedError(f"Need to do a cartesian product, the schema is {schema}")
+    num_partitions = schema[1][0]["tau"]  # TODO: ugly, fix this
+    df_exploded = build_partitions_dataframe(
+        df=df,
+        fingerprint_col=df_fp_col,
+        fingerprint_size=fingerprint_size,
+        K=K,
+        num_tables=num_partitions,
+    )
+    df_exploded = df_exploded.cache()
+
+    # Join corpus and query, finding common tokens
+    # (both token and token_id must be equal)
+    near_dups = (
+        df_exploded.alias("a")
+        .join(
+            df_exploded.alias("b"),
+            (F.col("a.token") == F.col("b.token")) & (F.col("a.token_id") == F.col("b.token_id")),
+        )
+        # Prevents duplicates
+        .where(F.col(f"a.{df_id_col}") < F.col(f"b.{df_id_col}"))
+        .select(
+            F.col(f"a.{df_id_col}").alias("id1"),
+            F.col(f"b.{df_id_col}").alias("id2"),
+            F.col(f"a.{df_fp_col}").alias("fingerprint1"),
+            F.col(f"b.{df_fp_col}").alias("fingerprint2"),
+        )
+    )
+
+    # print(corpus_tables.groupBy("token").count().sort(F.col("count").desc()).show())
+    return near_duplicates_pairs(near_dups, f1="fingerprint1", f2="fingerprint2", K=K).distinct()
 
 
 def optimal_design(

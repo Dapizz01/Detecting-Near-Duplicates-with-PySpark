@@ -12,6 +12,12 @@ def read_synthetic() -> DataFrame:
     return df
 
 
+def read_c5() -> DataFrame:
+    spark = get_spark()
+    df = spark.read.csv(str(data_path("c5_ita.csv")), inferSchema=True, header=True)
+    return df
+
+
 def read_paws() -> DataFrame:
     spark = get_spark()
     df = spark.read.csv(str(data_path("paws.csv")), inferSchema=True, header=True)
