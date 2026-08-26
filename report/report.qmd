@@ -13,7 +13,7 @@ format:
     margin:
       x: 1in
       y: 1.25in
-    columns: 2             # uncomment for a two-column paper look
+    # columns: 2             # uncomment for a two-column paper look
 # number-sections: true        # numbered sections: 1, 1.1, 2 ...
 bibliography: references.bib
 execute:
@@ -24,44 +24,60 @@ fig-align: center
 ---
 
 # Introduction
-Detecting duplicates in a dataset is crucial for tasks like web crawlers or AI model training, freeing compute power.
-In order to solve this, intuitively, it's possible to hash data and compare all rows using a cartesian product.
-This approach is fragile - tiny changes between data will produce wildly different hashes, which is undesirable.
-Moreover, the time complexity for a cartesian product is $O(n^2)$, which is untractable for large datasets.
-Manku et al. approach [@original_paper] suggest to look for near duplicates.
-It aims to produce similar hashes for similar data, while providing optimization for the comparison algorithm.
-Their feature model proposals are benchmarked against the PAWS dataset [@paws], a corpus of paraphrased sentences, and a synthetic Wikipedia dataset [@wikipedia_dataset].
+Detecting duplicates in a dataset is crucial for tasks such as web crawling or AI model training, as it frees up computational resources.
+A straightforward approach to solve this involves hashing the data and comparing all rows via a Cartesian product.
+However, this approach is fragile: minor differences in the data might produce entirely different hashes, which is undesirable.
+Moreover, the time complexity of a Cartesian product is $O(n^2)$, making it untractable for large datasets.
+The approach proposed by Manku et al. [@original_paper] suggest to identify near-duplicates instead.
+This method aims to generate similar hashes for similar data, leveraging this property to optimize the comparison algorithm.
+Their proposed feature models are benchmarked against the PAWS dataset [@paws], a corpus of paraphrased sentences, and a modified Wikipedia dataset [@wikipedia_dataset].
 Lastly, their algorithm is ran on a subset of the C5 dataset [@c5], a collection of web crawls.
-<!--
-Two documents are considered near-duplicates if they are similar to each other.
-An efficient and optimized algorithm for near-duplicates detection in a large dataset is crucial for tasks like web crawling, antivirus softwares and AI model training. 
-Intuitively, a cartesian product can solve this issue, but its time complexity skyrockets even for small datasets.
-Manku et al. [@original_paper] suggest to extract features from documents, compute the aggregated fingerprint using Charikar's Simhash and then compare fingerprints looking only at a specific partition of bits, for every partition.
-This paper reproduces the central claims of [@original_paper], and analyzes its performance under different datasets, feature models and parameters. -->
 
 # Methodology
-Manku et al. [@original_paper] proposal can be split into a two part pipeline.
+The methodology proposed by Manku et al. [@original_paper] can be divided into a two-part pipeline.
 
 ## Fingerprint Generation
-The target of this first phase is to transform text into binary values of fixed length, called *fingerprints*.
-More specifically, to similar data must corrispond similar fingerprints (i.e. their hamming distance is low).
-In order to do this, Charikar's SimHash [@simhash] is used: each text is converted into a set of fixed length binary values called *features*,
-which are then assembled into a single binary value of the same size - a fingerprint.
-Choosing the correct feature model and fingerprint size for a dataset is important.
-The original paper proposes different feature models like *Shingles* and *TF-IDF*, ultimately choosing the latter, with a fingerprint size of 64 bits.
-In this work, four feature models are tested and compared: *Shingles*, *TF-IDF*, *Bag of Words* and *Embeddings*, with fingerprint sizes from 32 bits up to 512 bits.
+The objective of this first phase is to transform text into a single, fixed-length binary value, referred to as a *fingerprint*.
+Specifically, similar data must corrispond to similar fingerprints (i.e. having a low Hamming distance).
+To achieve this, Charikar's SimHash [@simhash] is adopted: each text is converted into a set of fixed-length binary values called *features*,
+which are then assembled to form a fingerprint.
+A set of features is reduced into a fingerprint by selecting the most frequent bit value at each position: $1$ if the majority of bits are $1$ at that index, $0$ otherwise.
 
-### Shingles
-...
-
-### TF-IDF
+Selecting the appropriate feature model and fingerprint size for a given dataset is important.
+The original paper proposes various feature models, such as *Shingles* and *TF-IDF*, ultimately selecting the latter with a fingerprint size of 64 bits.
+In this work, four feature models are tested and compared:
+*Bag of Words*, *Shingles*, *TF-IDF* and *Embeddings*, using fingerprint sizes ranging from 32 bits up to 512 bits.
 ...
 
 ### Bag of Words
-...
+For a given text, its features are the individual words it contains.
+Hence, two texts are considered near-duplicate if they contain about the same words.
+This approach is computationally efficient and simple to implement, but it fails to preserve spatial locality.
+For example, the sentence "The bank is after the office" yields the exact same features as "The office is after the bank".
+
+### Shingles
+Generally, a shingle is a contiguous sequence of $n$ items from a data source; in this context, it refers to an overlapping contiguous sequence of $n$ characters.
+Shingles are generated using a sliding window algorithm with a window size of $n$.
+This model preserves locality to some extent, but it generates a large number of features, which can negatively impact performance.
+To reduce the feature count, a non-overlapping variant is considered.
+Additionally, word-based shingles (as opposed to traditional character-based ones) are evaluated.
+
+### TF-IDF
+This is a refined version of *Bag of Words* that accounts for both the frequency of a word within a specific text (DF) and its rarity across the entire dataset (IDF):
+$$\text{TF-IDF}(term, document, Dataset) = TF(term, document) * IDF(term, Dataset)$$
+TF stands for Term Frequency, which assigns higher importance to words that appear frequently in a given text:
+$$TF(term, document) = \frac{\text{How many times term appears in document}}{\text{How many words document has}}$$
+IDF stands for Inverse Document Frequency, which assigns higher weight to words that appear in fewer distinct documents.
+This filters out very common words, such as conjunctions and verbs:
+$$IDF(term, Dataset) = \log(\frac{\text{Total number of documents in Dataset}}{\text{Number of documents that contain term}})$$
+This is the feature model chosen in the original paper [@original_paper].
+However, it is computationally more expensive than previous models, which were "local" in the sense that computing the features of a single text did not require information about the entire dataset.
+Furthermore, maintenance introduces additional overhead, as the weights of each term must be recomputed whenever the dataset changes.
 
 ### Embeddings
-...
+An embedding model is a machine learning algorithm that maps text into a vector capturing its semantic meaning.
+In this study, a transformer-based model, *Qwen3-embedding-0.6b* [@qwen3embedding], is used and executed locally.
+While all previous models rely on syntax to extract features, embedding models operate on semantics, allowing for the detection of semantically-near-duplicate text.
 
 ## Fingerprint Aggregation
 ...
