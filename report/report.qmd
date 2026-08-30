@@ -4,7 +4,8 @@ author:
   - name: Name Surname
 date: 2026-08-01
 abstract: |
-    This paper aims to reproduce the findings of the "Near-Duplicate Detection for Web Crawling" work, using PySpark to scale the proposed algorithm, under different datasets, feature models and parameters.
+    This paper aims to reproduce the findings of the "Near-Duplicate Detection for Web Crawling" work, 
+    using PySpark to scale the proposed algorithm, under different datasets, feature models and parameters.
 keywords: [near-duplicate detection, nlp, feature extraction, big data, pyspark]
 format:
   typst:
@@ -36,7 +37,7 @@ Lastly, their algorithm is ran on a subset of the C5 dataset [@c5], a collection
 # Methodology
 The methodology proposed by Manku et al. [@original_paper] can be divided into a two-part pipeline.
 
-## Fingerprint Generation
+## 1. Fingerprint Generation
 The objective of this first phase is to transform text into a single, fixed-length binary value, referred to as a *fingerprint*.
 Specifically, similar data must corrispond to similar fingerprints (i.e. having a low Hamming distance).
 To achieve this, Charikar's SimHash [@simhash] is adopted: each text is converted into a set of fixed-length binary values called *features*,
@@ -47,7 +48,6 @@ Selecting the appropriate feature model and fingerprint size for a given dataset
 The original paper proposes various feature models, such as *Shingles* and *TF-IDF*, ultimately selecting the latter with a fingerprint size of 64 bits.
 In this work, four feature models are tested and compared:
 *Bag of Words*, *Shingles*, *TF-IDF* and *Embeddings*, using fingerprint sizes ranging from 32 bits up to 512 bits.
-...
 
 ### Bag of Words
 For a given text, its features are the individual words it contains.
@@ -71,16 +71,48 @@ IDF stands for Inverse Document Frequency, which assigns higher weight to words 
 This filters out very common words, such as conjunctions and verbs:
 $$IDF(term, Dataset) = \log(\frac{\text{Total number of documents in Dataset}}{\text{Number of documents that contain term}})$$
 This is the feature model chosen in the original paper [@original_paper].
-However, it is computationally more expensive than previous models, which were "local" in the sense that computing the features of a single text did not require information about the entire dataset.
+However, it is computationally more expensive than previous models, 
+which were "local" in the sense that computing the features of a single text did not require information about the entire dataset.
 Furthermore, maintenance introduces additional overhead, as the weights of each term must be recomputed whenever the dataset changes.
 
 ### Embeddings
 An embedding model is a machine learning algorithm that maps text into a vector capturing its semantic meaning.
 In this study, a transformer-based model, *Qwen3-embedding-0.6b* [@qwen3embedding], is used and executed locally.
-While all previous models rely on syntax to extract features, embedding models operate on semantics, allowing for the detection of semantically-near-duplicate text.
+While all previous models rely on syntax to extract features, 
+embedding models operate on semantics, allowing for the detection of semantically-near-duplicate text.
 
-## Fingerprint Aggregation
-...
+<!-- Double-checked up to here -->
+
+## 2. Fingerprint Matching
+Now every text in the dataset has an associated fingerprint.
+The goal for this phase is to compare fingerprints from two datasets, called *corpus* and *query* for simplicity sake,
+in order to find pairs of fingerprints which Hamming distance is less than $K$, a fixed integer value.
+The reference paper [@original_paper] approaches this problem by splitting each fingerprint into at least $K+n$ *partitions*, for $n > 0$.
+This grants a useful property: if two fingerprints are near-duplicate by a factor of $K$, then at least $n$ of their $K+n$ partitions must be equal 
+(the opposite doesn't hold - the other partitions might have more than $K$ different bits).
+The optimal number of partitions is derived by the following formula:
+$$X(f, k, d) = \begin{cases} 
+1 & \text{if } d < \tau \\ 
+\min_{r > k} \binom{r}{k} \cdot X\left(\frac{f k}{r}, k, d - \frac{(r-k)f}{r}\right) & \text{otherwise} 
+\end{cases}$$
+where $f$ is the size of each fingerprint, $K$ is the maximum allowed Hamming distance, $d$ is the $log_2$ cardinality of the dataset and $p_min$ is the maximum allowed cardinality of the candidate set (in $log_2$).
+
+Once the partitions are composed, the original paper [@original_paper] suggest to sort the fingerprints of *corpus* in an increasing order for each partition 
+and run a binary search algorithm over the bits of the partition, in order to find all matches.
+In a distributed environment, it's possible to parallelize this easily by assigning a partition to each node.
+It's possible to optimize the space in memory of the partitions by using an Huffman code to compress the fingerprints.
+
+Unfortunately, this approach is impossible to replicate in PySpark, for several reasons.
+First of all, it's impossible to distribute partitions across nodes directly - it's responsability of the Spark engine to do so, in a transparent way. 
+Therefore, it's also not possible to use Huffman code or apply binary search. 
+
+As a result, an original approach is considered.
+The partitions aren't stored in separate data structures anymore - they are inglobated into *corpus*, 
+and function as an index for a join operation between *corpus* and *query*, finding candidates whose partition values are the same.
+
+
+## Optimizations
+Manku et al. [@original_paper] provided some guidelines about optimizing the processing in clusters, which is necessary for very large datasets. In particular, for contexts where the partitions are distributed across nodes, it's possible to save some space using an Huffman code to compress 
 
 # Implementation
 This implementation leverages the PySpark [@pyspark] framework, which allows to scale computing resources seamlessly.

@@ -18,6 +18,8 @@ def get_spark() -> SparkSession:
         .config("spark.driver.memory", SPARK_DRIVER_MEMORY)
         .config("spark.sql.shuffle.partitions", SPARK_SHUFFLE_PARTITIONS)
         .config("spark.sql.warehouse.dir", "/tmp/spark-warehouse")
+        .config("spark.python.profile", "true")  # TODO: remove after debug
+        .config("spark.python.profile.memory", "true")
     )
     return builder.getOrCreate()
 
