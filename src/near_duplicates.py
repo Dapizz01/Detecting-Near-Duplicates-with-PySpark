@@ -1,13 +1,11 @@
 import itertools
 import math
 from functools import lru_cache
-from typing import List
 
-import numpy as np
 import pandas as pd
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
-from pyspark.sql.types import ArrayType, BinaryType, IntegerType, StructField, StructType
+from pyspark.sql.types import IntegerType, StructField, StructType
 
 from src.metrics import Metrics, extract_metrics
 from src.spark_utils import get_spark
@@ -117,105 +115,146 @@ def tables_schema(f: int, K: int, d: int, p_min: int) -> tuple[int, list[dict]]:
     return X(f=f, d=d)
 
 
-def get_block_shifts_masks(tables_sizes: list[int]) -> list[tuple[int, int]]:
+def get_blocks_masks(blocks_sizes: list[int]) -> list[tuple[int, int]]:
+    """Translates a list of block sizes into a list of offsets and masks.
+    Useful to split fingerprints into blocks.
+
+    Args:
+        blocks_sizes (list[int]): list of block sizes
+
+    Returns:
+        list[tuple[int, int]]: list of (offset, bit_mask)
+    """
     shifts_masks = []
     shift = 0
-    for length in reversed(tables_sizes):
+    # Iterate reversed, it makes shift computation easier
+    for length in reversed(blocks_sizes):
+        # 1000000... - 1 -> 011111...
         shifts_masks.append((shift, (1 << length) - 1))
         shift += length
+    # Reverse back to get increasing order
     shifts_masks.reverse()
     return shifts_masks
 
 
-def get_combo_plans(tables_sizes, combos) -> list[list[tuple[int, int]]]:
-    return [[(idx, tables_sizes[idx]) for idx in combo] for combo in combos]
+def get_partitions_blocks_sizes(
+    blocks_sizes: list[int], combos: list[tuple[int, ...]]
+) -> list[list[tuple[int, int]]]:
+    """Returns all blocks (index and size) of all partitions combinations.
+
+    Args:
+        blocks_sizes (list[int]): list of all blocks sizes
+        combos (list[tuple[int, ...]]): list of all partitions combinations
+
+    Returns:
+        list[list[tuple[int, int]]]: list of all blocks (index and size) of all partitions combinations.
+    """
+    return [[(idx, blocks_sizes[idx]) for idx in combo] for combo in combos]
 
 
-def extract_blocks(fingerprint: int, shifts_masks) -> list[int]:
-    return [(fingerprint >> shift) & mask for shift, mask in shifts_masks]
+def extract_blocks(fingerprint: int, masks: list[tuple[int, int]]) -> list[int]:
+    """Extracts all blocks from a fingerprint, following the provided masks (obtained via get_blocks_masks)
+
+    Args:
+        fingerprint (int): a fingerprint
+        shifts_masks (list[tuple[int, int]]): a list of masks, obtainable with get_blocks_masks(...)
+
+    Returns:
+        list[int]: ordered list of all blocks in the fingerprint
+    """
+    return [(fingerprint >> shift) & mask for shift, mask in masks]
 
 
-def extract_tokens_fast(blocks, combo_plans) -> list[int]:
-    tokens = []
-    for plan in combo_plans:
-        token = 0
-        for idx, size in plan:
-            token = (token << size) | blocks[idx]
-        tokens.append(token)
-    return tokens
+def extract_partitions(blocks: list[int], combos: list[list[tuple[int, int]]]) -> list[int]:
+    """Extracts all blocks of all partitions (listed in combos) of blocks.
 
+    Args:
+        blocks (list[int]): List of block values.
+        combos (list[list[tuple[int, int]]]): All combos. Each combo is a list of (block_id, offset).
 
-def get_tables_sizes(fingerprint_size: int, num_tables: int) -> list[int]:
-    base, remainder = divmod(fingerprint_size, num_tables)
-    return [base + 1 if i < remainder else base for i in range(num_tables)]
-
-
-def extract_tokens(fingerprint: int, tables_sizes: list[int], combos: list[tuple]) -> list[int]:
-    blocks = []
-    current_fingerprint = fingerprint
-
-    for length in reversed(tables_sizes):
-        mask = (1 << length) - 1
-        blocks.insert(0, current_fingerprint & mask)
-        current_fingerprint >>= length
-
+    Returns:
+        list[int]: List of key blocks values
+    """
     tokens = []
     for combo in combos:
         token = 0
-        for idx in combo:
-            token = (token << tables_sizes[idx]) | blocks[idx]
+        for idx, offset in combo:
+            token = (token << offset) | blocks[idx]
         tokens.append(token)
     return tokens
 
 
+def get_blocks_sizes(fingerprint_size: int, num_blocks: int) -> list[int]:
+    base, remainder = divmod(fingerprint_size, num_blocks)
+    return [base + 1 if i < remainder else base for i in range(num_blocks)]
+
+
 def build_broadcast_tables(
-    query: DataFrame, fingerprint_size: int, K: int, num_tables: int
-) -> tuple[dict, dict]:
-    # Add select for id/fingerprint columns
+    query: DataFrame, fingerprint_size: int, K: int, num_blocks: int
+) -> tuple[dict, list[dict]]:
+    assert (
+        len(query.columns) == 2
+    ), "The query dataframe must have schema: (ID: int, fingerprint: binary)"
+    # Move the query DataFrame in the driver memory
     query_rows = query.collect()
-    tables_sizes = get_tables_sizes(fingerprint_size=fingerprint_size, num_tables=num_tables)
-    combos = list(itertools.combinations(range(num_tables), num_tables - K))
+    # Obtains sizes of each block (ex: [11, 11, 11, 11, 10, 10])
+    blocks_sizes = get_blocks_sizes(fingerprint_size=fingerprint_size, num_blocks=num_blocks)
+    # Computes all partition combinations of num_blocks - K blocks (pigeonhole)
+    combos = list(itertools.combinations(range(num_blocks), num_blocks - K))
     query_reference = {}
-    tables = [{} for _ in range(len(combos))]
-    shifts_masks = get_block_shifts_masks(tables_sizes=tables_sizes)
-    combo_plans = get_combo_plans(tables_sizes=tables_sizes, combos=combos)
+    # List of all partitions.
+    # A partition is represented as a dict, having as key all the values of the key blocks of that partition,
+    # and as value a list of query rows IDs whose key block value is the key.
+    # Ex: all_partitions[partition_idx][token_key] = [query_id1, query_id2, ...]
+    all_partitions = [{} for _ in range(len(combos))]
+    # Takes all masks to extract bits from blocks.
+    blocks_masks = get_blocks_masks(blocks_sizes=blocks_sizes)
+    partitions_blocks_sizes = get_partitions_blocks_sizes(blocks_sizes=blocks_sizes, combos=combos)
 
     for row in query_rows:
         query_id = row[0]
+        # Parse the fingerprint from binary to integer (Python integers can be larger than 64 bits)
         query_fingerprint = int.from_bytes(row[1], "big")
-        tokens = extract_tokens_fast(
-            extract_blocks(query_fingerprint, shifts_masks=shifts_masks),
-            combo_plans=combo_plans,
+        # TODO: check if this is as intended.
+        partitions = extract_partitions(
+            extract_blocks(query_fingerprint, masks=blocks_masks),
+            combos=partitions_blocks_sizes,
         )
-        # TODO: in order to implement nested schemas, it's necessary to just save
-        # the part of query_fingerprint that is yet to check
+        # Save the fingerprint for O(1) access during map phase
         query_reference[query_id] = query_fingerprint
-        tokens = extract_tokens(query_fingerprint, tables_sizes=tables_sizes, combos=combos)
 
-        for table_idx, token in enumerate(tokens):
-            if token not in tables[table_idx]:
-                tables[table_idx][token] = []
-            tables[table_idx][token].append(query_id)
-    return query_reference, tables
+        # For each block extracted, add it to partitions
+        for partition_idx, partition in enumerate(partitions):
+            if partition not in all_partitions[partition_idx]:
+                all_partitions[partition_idx][partition] = []
+            all_partitions[partition_idx][partition].append(query_id)
+    return query_reference, all_partitions
 
 
 def detect_near_duplicate_batch(
     corpus: DataFrame, query: DataFrame, fingerprint_size: int, K: int
 ) -> DataFrame:
     spark = get_spark()
-    # TODO: implement this better
+    # Grab the optimal number of tables ("r" param) of the first schema
+    # Since multiple tables are expensive to compute (for little benefit),
+    # just the first schema is considered.
     num_tables = tables_schema(f=fingerprint_size, K=K, d=20, p_min=10)[1][0]["r"]
+    # query_reference is a dict that allows O(1) reading when comparing fingerprints.
     query_reference, tables = build_broadcast_tables(
-        query=query, fingerprint_size=fingerprint_size, K=K, num_tables=num_tables
+        query=query, fingerprint_size=fingerprint_size, K=K, num_blocks=num_tables
     )
+    blocks_sizes = get_blocks_sizes(fingerprint_size=fingerprint_size, num_blocks=num_tables)
+    combos = list(itertools.combinations(range(num_tables), num_tables - K))
+    blocks_masks = get_blocks_masks(blocks_sizes=blocks_sizes)
+    partitions_blocks_sizes = get_partitions_blocks_sizes(blocks_sizes=blocks_sizes, combos=combos)
+
+    # Broadcast to the executors all the query fingerprints and the partition tables.
+    # The size of query is supposed to be small enough to be broadcasted (max 10MB, configurable)
     broadcast_refs = spark.sparkContext.broadcast(query_reference)
     broadcast_tables = spark.sparkContext.broadcast(tables)
-    schema_blocks = get_tables_sizes(fingerprint_size=fingerprint_size, num_tables=num_tables)
-    combos = list(itertools.combinations(range(num_tables), num_tables - K))
-    shifts_masks = get_block_shifts_masks(schema_blocks)
-    combo_plans = get_combo_plans(schema_blocks, combos)
 
     def probe_corpus(iterator):
+        # Access broadcasted values
         refs = broadcast_refs.value
         tables = broadcast_tables.value
 
@@ -223,29 +262,33 @@ def detect_near_duplicate_batch(
             corpus_id = row[0]
             corpus_fingerprint = int.from_bytes(row[1], "big")
 
-            tokens = extract_tokens_fast(
-                extract_blocks(corpus_fingerprint, shifts_masks=shifts_masks),
-                combo_plans=combo_plans,
+            tokens = extract_partitions(
+                extract_blocks(corpus_fingerprint, masks=blocks_masks),
+                combos=partitions_blocks_sizes,
             )
+
+            # Keeps track of past matches - prevents multiple hits for the same query ID.
             seen_query_ids = set()
 
             for table_idx, token in enumerate(tokens):
-                # candidates = tables[table_idx].get(token, [])
                 candidates = tables[table_idx].get(token)
+                # No match, skip.
                 if not candidates:
                     continue
 
                 for query_id in candidates:
-                    # Prevent evaluating the same pair multiple times
+                    # Prevent evaluating the same pair multiple times.
                     if query_id in seen_query_ids:
                         continue
                     seen_query_ids.add(query_id)
 
-                    # Fetch heavy fingerprint from flat map and evaluate native XOR
+                    # Fetch query fingerprint from dict and XOR them.
                     query_fingerprint = refs[query_id]
                     if (corpus_fingerprint ^ query_fingerprint).bit_count() <= K:
                         yield (corpus_id, query_id)
 
+    # Maps every row of corpus into a (corpus_id, query_id) pair, executing probe_corpus.
+    # This could be further optimized with mapInPandas, but it's fine for small/medium sized datasets.
     result_rdd = corpus.select("ID", "fingerprint").rdd.mapPartitions(probe_corpus)
     corpus_id_type = corpus.schema["ID"].dataType
     query_id_type = query.schema["ID"].dataType
@@ -255,162 +298,3 @@ def detect_near_duplicate_batch(
     )
 
     return spark.createDataFrame(result_rdd, schema=schema)
-
-
-def build_partitions_dataframe(
-    df: DataFrame, fingerprint_col: str, fingerprint_size: int, K: int, num_tables: int
-) -> DataFrame:
-    schema: List[int] = []
-
-    # Splits fs into n parts evenly, putting larger blocks first
-    def apply_partition_schema(fs: int, n: int):
-        base, remainder = divmod(fs, n)
-        return [base + 1 if i < remainder else base for i in range(n)]
-
-    # Split fingeprints into tokens, reading the schema from the container function
-    @F.pandas_udf(ArrayType(BinaryType()))  # type: ignore
-    def helper(fingerprints: pd.Series) -> pd.Series:
-        # Aggregates all fingerprints into a single binary string,
-        # unpacked as list of uint8 (each value is a bit)
-        bits = np.unpackbits(np.frombuffer(b"".join(fingerprints.tolist()), np.uint8))
-        # Reshape list of bits as a matrix, with *len(fingerprints)* rows
-        # and sum(schema) columns
-        bits = bits.reshape(len(fingerprints), sum(schema))
-
-        cols, start = [], 0
-        for partition_size in schema:
-            # Create partition, padding bits if necessary
-            packed = np.packbits(bits[:, start : start + partition_size], axis=1)
-            # Transforms column into a list
-            cols.append(packed.view(f"S{packed.shape[1]}").ravel().tolist())
-            start += partition_size
-        # Zip columns together, recomposing the original rows
-        return pd.Series(map(list, zip(*cols)), index=fingerprints.index, dtype=object)  # type: ignore
-
-    assert fingerprint_col in df.columns
-    combos = list(itertools.combinations([i for i in range(num_tables)], num_tables - K))
-    schema = apply_partition_schema(fs=fingerprint_size, n=num_tables)
-    df = df.withColumn("tokens", helper(F.col(fingerprint_col)))  # type: ignore
-    return df.select(
-        "*",
-        F.posexplode(
-            F.array(*[F.array(*[F.col("tokens")[i] for i in combo]) for combo in combos])
-        ).alias("token_id", "token"),
-    )
-
-
-def near_duplicate_batch(
-    corpus: DataFrame,
-    query: DataFrame,
-    corpus_fp_col: str,
-    query_fp_col: str,
-    corpus_id_col: str,
-    query_id_col: str,
-    fingerprint_size: int,
-    K: int,
-) -> DataFrame:
-    corpus_size = corpus.count()
-    # TODO: use other schema function
-    schema = optimal_design(f=fingerprint_size, k=K, d=int(math.log(corpus_size, 2)), p_min=10)
-    if schema[0] == 1:
-        # It's not possible to partition the fingerprints, and a cartesian product might be too expensive
-        raise NotImplementedError(f"Need to do a cartesian product, the schema is {schema}")
-    num_partitions = schema[1][0]["tau"]  # TODO: ugly, fix this
-    corpus_exploded = build_partitions_dataframe(
-        df=corpus,
-        fingerprint_col=corpus_fp_col,
-        fingerprint_size=fingerprint_size,
-        K=K,
-        num_tables=num_partitions,
-    )
-    query_exploded = build_partitions_dataframe(
-        df=query,
-        fingerprint_col=query_fp_col,
-        fingerprint_size=fingerprint_size,
-        K=K,
-        num_tables=num_partitions,
-    )
-
-    # Join corpus and query, finding common tokens
-    # (both token and token_id must be equal)
-    near_dups = (
-        corpus_exploded.alias("a")
-        .join(
-            query_exploded.alias("b"),
-            (F.col("a.token") == F.col("b.token")) & (F.col("a.token_id") == F.col("b.token_id")),
-        )
-        # Prevents duplicates
-        .where(F.col(f"a.{corpus_id_col}") < F.col(f"b.{query_id_col}"))
-        .select(
-            F.col(f"a.{corpus_id_col}").alias("id1"),
-            F.col(f"b.{query_id_col}").alias("id2"),
-            F.col(f"a.{corpus_fp_col}").alias("fingerprint1"),
-            F.col(f"b.{query_fp_col}").alias("fingerprint2"),
-        )
-    )
-
-    # print(corpus_tables.groupBy("token").count().sort(F.col("count").desc()).show())
-    return near_duplicates_pairs(near_dups, f1="fingerprint1", f2="fingerprint2", K=K).distinct()
-
-
-# TODO: for now, this function can't make nested partitions. Is this fine, or should this be fixed?
-# Either way, it needs to be pointed out.
-def near_duplicate_mirror(
-    df: DataFrame,
-    df_fp_col: str,
-    df_id_col: str,
-    fingerprint_size: int,
-    K: int,
-    df_size: int,
-) -> DataFrame:
-    # TODO: use other schema function
-    schema = optimal_design(f=fingerprint_size, k=K, d=int(math.log(df_size, 2)), p_min=10)
-    if schema[0] == 1:
-        # It's not possible to partition the fingerprints, and a cartesian product might be too expensive
-        raise NotImplementedError(f"Need to do a cartesian product, the schema is {schema}")
-    num_partitions = schema[1][0]["tau"]  # TODO: ugly, fix this
-    df_exploded = build_partitions_dataframe(
-        df=df,
-        fingerprint_col=df_fp_col,
-        fingerprint_size=fingerprint_size,
-        K=K,
-        num_tables=num_partitions,
-    )
-    # df_test = df_exploded.select(df_id_col, "token_id", "token")
-    # df_exploded = df_exploded.cache()
-
-    # Join corpus and query, finding common tokens
-    # (both token and token_id must be equal)
-    near_dups = (
-        df_exploded.alias("a")
-        .join(
-            df_exploded.alias("b"),
-            (F.col("a.token") == F.col("b.token")) & (F.col("a.token_id") == F.col("b.token_id")),
-        )
-        # Prevents duplicates
-        .where(F.col(f"a.{df_id_col}") < F.col(f"b.{df_id_col}"))
-        .select(
-            F.col(f"a.{df_id_col}").alias("id1"),
-            F.col(f"b.{df_id_col}").alias("id2"),
-            F.col(f"a.{df_fp_col}").alias("fingerprint1"),
-            F.col(f"b.{df_fp_col}").alias("fingerprint2"),
-        )
-        .drop_duplicates(["id1", "id2"])
-        # .distinct()
-    )
-
-    # fp1 = df.select(F.col(df_id_col).alias("id1"), F.col(df_fp_col).alias("fingerprint1"))
-    # fp2 = df.select(F.col(df_id_col).alias("id2"), F.col(df_fp_col).alias("fingerprint2"))
-
-    # print(corpus_tables.groupBy("token").count().sort(F.col("count").desc()).show())
-    result = near_duplicates_pairs(near_dups, f1="fingerprint1", f2="fingerprint2", K=K)
-    return result
-
-
-# Make function that chops fingerprints given a schema and posexplodes them
-
-# Make function that prepares the fingerprint database, creating schema and tables, saving it on disk if it's not there already.
-
-# Make function that prepares the query
-
-# Make function that joins database and query, dropping duplicates and checking K distance.
