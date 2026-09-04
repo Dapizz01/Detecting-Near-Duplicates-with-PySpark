@@ -18,6 +18,16 @@ def read_c5() -> DataFrame:
     return df
 
 
+def read_llm_paraphrases() -> DataFrame:
+    spark = get_spark()
+    df = spark.read.csv(str(data_path("llm-paraphrases.csv")), inferSchema=True, header=True)
+    df = df.withColumn(
+        "is_near_duplicate",
+        F.when(F.col("is_near_duplicate") == 1, F.lit(True)).otherwise(F.lit(False)),
+    )
+    return df.withColumnsRenamed({"text1": "data1", "text2": "data2"})
+
+
 def read_paws() -> DataFrame:
     spark = get_spark()
     df = spark.read.csv(str(data_path("paws.csv")), inferSchema=True, header=True)

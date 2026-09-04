@@ -1,11 +1,76 @@
 import pyspark.sql.functions as F
-from pyspark.ml.feature import Tokenizer
+from pyspark.ml.feature import IDF, CountVectorizer, StopWordsRemover, Tokenizer
 from pyspark.sql import DataFrame
+from pyspark.sql.types import ArrayType, DoubleType
 
 from src.simhash import simhash_tf_idf
+from src.spark_utils import get_spark
 
 
 def make_fingerprints(
+    df: DataFrame, input_col: str, output_col: str, fingerprint_size: int
+) -> DataFrame:
+    assert input_col in df.columns
+
+    # Tokenize word by space
+    tokenizer = Tokenizer(inputCol=input_col, outputCol="words")
+    df_tokens = tokenizer.transform(df)
+
+    # Removes frequent english words ("the", "and", ...)
+    remover = StopWordsRemover(
+        inputCol="words",
+        outputCol="filtered_words",
+        stopWords=StopWordsRemover.loadDefaultStopWords("english"),
+    )
+    df_cleaned = remover.transform(df_tokens)
+
+    # Converts tokens into a vector of token counts (DF)
+    cv = CountVectorizer(inputCol="filtered_words", outputCol="features")
+    cv_model = cv.fit(df_cleaned)
+    df_tf = cv_model.transform(df_cleaned)
+
+    # Computes TF-IDF, taking DF as input (vector frequencies)
+    idf = IDF(inputCol="features", outputCol="tfidf_features")
+    idf_model = idf.fit(df_tf)
+    df_tfidf = idf_model.transform(df_tf)
+
+    # Extracts vocabulary (dict) of token-weight
+    vocabulary = cv_model.vocabulary
+    try:
+        vocabulary_dict = get_spark().sparkContext.broadcast(
+            {word: i for i, word in enumerate(vocabulary)}
+        )
+    except Exception as e:
+        print(f"Error during vocabulary broadcast for TF-IDF: {e}")
+        print("Most likely, the vocabulary is too large to be broadcasted.")
+
+    @F.udf(returnType=ArrayType(DoubleType()))
+    def extract_weights(tokens, tfidf_vector):
+        vector_dict = dict(zip(tfidf_vector.indices, tfidf_vector.values))
+        weights = []
+
+        for token in tokens:
+            idx = vocabulary_dict.value.get(token)
+            # If the token is missing from the vocabulary, set weight to 0.0
+            weight = float(vector_dict.get(idx, 0.0)) if idx is not None else 0.0
+            weights.append(weight)
+        return weights
+
+    # The IDF method returns PySpark vectors, not lists.
+    # It's necessary to grab weights form the vocabulary.
+    result = df_tfidf.withColumn("tf-idf", extract_weights("filtered_words", "tfidf_features"))
+
+    # Lastly, compute simhash
+    result = result.withColumn(
+        output_col,
+        simhash_tf_idf(F.col("filtered_words"), F.col("tf-idf"), F.lit(fingerprint_size)),  # type: ignore
+    )
+    return result.drop("words", "features", "filtered_words", "tfidf_features")
+
+
+# This is an old, custom-built implementation of TF-IDF.
+# It works but it's really, really slow.
+def make_fingerprints_legacy(
     df: DataFrame, input_col: str, output_col: str, fingerprint_size: int
 ) -> DataFrame:
     assert input_col in df.columns

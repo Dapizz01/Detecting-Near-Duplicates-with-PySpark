@@ -100,15 +100,7 @@ where $f$ is the size of each fingerprint, $K$ is the maximum allowed Hamming di
 Once the partitions are composed, the original paper [@original_paper] suggest to sort the fingerprints of *corpus* in an increasing order for each partition 
 and run a binary search algorithm over the bits of the partition, in order to find all matches.
 In a distributed environment, it's possible to parallelize this easily by assigning a partition to each node.
-It's possible to optimize the space in memory of the partitions by using an Huffman code to compress the fingerprints.
-
-Unfortunately, this approach is impossible to replicate in PySpark, for several reasons.
-First of all, it's impossible to distribute partitions across nodes directly - it's responsability of the Spark engine to do so, in a transparent way. 
-Therefore, it's also not possible to use Huffman code or apply binary search. 
-
-As a result, an original approach is considered.
-The partitions aren't stored in separate data structures anymore - they are inglobated into *corpus*, 
-and function as an index for a join operation between *corpus* and *query*, finding candidates whose partition values are the same.
+It's possible to optimize the space in memory of the partitions by using an Huffman code to compress the fingerprints most important bits.
 
 
 ## Optimizations

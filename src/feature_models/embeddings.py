@@ -7,7 +7,7 @@ import requests
 from pyspark.sql import DataFrame
 from pyspark.sql.types import BinaryType
 
-# Those parameters are machine-dependent
+# These parameters are meant for Ollama, may need to be changed on other devices.
 OLLAMA_URL = "http://localhost:11434/api/embed"
 MODEL = "Qwen3-embedding:0.6b"
 BATCH_SIZE = 16
@@ -52,8 +52,7 @@ def get_embeddings(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
 
                 embeddings.extend([quantize(emb) for emb in batch_res])
                 # Output: [b"\x01\x02", b"...", ...]
-            except Exception as e:
-                print(f"Error while generating the embeddings: {e}")
+            except Exception:
                 # Padded with None, the output series must have the same number
                 # of elements as the input series
                 embeddings.extend([None] * len(batch))

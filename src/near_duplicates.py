@@ -21,7 +21,7 @@ def hamming_distance_bin(col1: pd.Series, col2: pd.Series) -> pd.Series:
     return pd.Series([hamming(b1, b2) for b1, b2 in zip(col1, col2)], dtype="Int64")
 
 
-def near_duplicates_pairs(df: DataFrame, f1: str, f2: str, K: int) -> DataFrame:
+def detect_near_duplicates_pairs(df: DataFrame, f1: str, f2: str, K: int) -> DataFrame:
     assert f1 in df.columns
     assert f2 in df.columns
     df = df.withColumn(
@@ -31,11 +31,10 @@ def near_duplicates_pairs(df: DataFrame, f1: str, f2: str, K: int) -> DataFrame:
     return df  # .drop("hamming_distance")
 
 
-# TODO: finish (and update) docstring
-def near_duplicates_benchmark(
+def detect_near_duplicates_benchmark(
     df: DataFrame, f1_col: str, f2_col: str, truth_col: str, K: int
 ) -> Metrics:
-    """Returns metrics about the efficacy...
+    """Benchmarks feature models efficacy, by comparing already established pairs of data.
 
     Args:
         df (DataFrame): the input PySpark DataFrame
@@ -68,7 +67,7 @@ def near_duplicates_benchmark(
     return extract_metrics(df, test_col="computed_near_duplicate", truth_col=truth_col)
 
 
-def tables_schema(f: int, K: int, d: int, p_min: int) -> tuple[int, list[dict]]:
+def partitions_schema(f: int, K: int, d: int, p_min: int) -> tuple[int, list[dict]]:
     """Estimates the optimal tables schema to find near-duplicates.
     Can return multiple schemas, to be applied sequentially.
 
@@ -215,7 +214,6 @@ def build_broadcast_tables(
         query_id = row[0]
         # Parse the fingerprint from binary to integer (Python integers can be larger than 64 bits)
         query_fingerprint = int.from_bytes(row[1], "big")
-        # TODO: check if this is as intended.
         partitions = extract_partitions(
             extract_blocks(query_fingerprint, masks=blocks_masks),
             combos=partitions_blocks_sizes,
@@ -238,7 +236,7 @@ def detect_near_duplicate_batch(
     # Grab the optimal number of tables ("r" param) of the first schema
     # Since multiple tables are expensive to compute (for little benefit),
     # just the first schema is considered.
-    num_tables = tables_schema(f=fingerprint_size, K=K, d=20, p_min=10)[1][0]["r"]
+    num_tables = partitions_schema(f=fingerprint_size, K=K, d=20, p_min=10)[1][0]["r"]
     # query_reference is a dict that allows O(1) reading when comparing fingerprints.
     query_reference, tables = build_broadcast_tables(
         query=query, fingerprint_size=fingerprint_size, K=K, num_blocks=num_tables
@@ -255,14 +253,14 @@ def detect_near_duplicate_batch(
 
     def probe_corpus(iterator):
         # Access broadcasted values
-        refs = broadcast_refs.value
-        tables = broadcast_tables.value
+        query_refs = broadcast_refs.value
+        query_tables = broadcast_tables.value
 
         for row in iterator:
             corpus_id = row[0]
             corpus_fingerprint = int.from_bytes(row[1], "big")
 
-            tokens = extract_partitions(
+            corpus_partitions = extract_partitions(
                 extract_blocks(corpus_fingerprint, masks=blocks_masks),
                 combos=partitions_blocks_sizes,
             )
@@ -270,12 +268,14 @@ def detect_near_duplicate_batch(
             # Keeps track of past matches - prevents multiple hits for the same query ID.
             seen_query_ids = set()
 
-            for table_idx, token in enumerate(tokens):
-                candidates = tables[table_idx].get(token)
+            for partition_idx, partition in enumerate(corpus_partitions):
+                # Check if there's a matching partition value in query, with the same partition_idx
+                candidates = query_tables[partition_idx].get(partition)
                 # No match, skip.
                 if not candidates:
                     continue
 
+                # Check all candidates
                 for query_id in candidates:
                     # Prevent evaluating the same pair multiple times.
                     if query_id in seen_query_ids:
@@ -283,7 +283,7 @@ def detect_near_duplicate_batch(
                     seen_query_ids.add(query_id)
 
                     # Fetch query fingerprint from dict and XOR them.
-                    query_fingerprint = refs[query_id]
+                    query_fingerprint = query_refs[query_id]
                     if (corpus_fingerprint ^ query_fingerprint).bit_count() <= K:
                         yield (corpus_id, query_id)
 
@@ -294,7 +294,10 @@ def detect_near_duplicate_batch(
     query_id_type = query.schema["ID"].dataType
 
     schema = StructType(
-        [StructField("ID", corpus_id_type, False), StructField("ID", query_id_type, False)]
+        [
+            StructField("ID_corpus", corpus_id_type, False),
+            StructField("ID_query", query_id_type, False),
+        ]
     )
 
     return spark.createDataFrame(result_rdd, schema=schema)
