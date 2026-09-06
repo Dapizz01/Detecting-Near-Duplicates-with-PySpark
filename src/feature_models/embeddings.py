@@ -11,6 +11,7 @@ from pyspark.sql.types import BinaryType
 OLLAMA_URL = "http://localhost:11434/api/embed"
 MODEL = "Qwen3-embedding:0.6b"
 BATCH_SIZE = 16
+CTX_SIZE = 1500
 
 
 @F.pandas_udf(BinaryType())  # type: ignore # noqa: F821
@@ -57,6 +58,62 @@ def get_embeddings(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
                 # of elements as the input series
                 embeddings.extend([None] * len(batch))
         yield pd.Series(embeddings)
+
+
+@F.pandas_udf(BinaryType())  # type: ignore # noqa: F821
+def get_embeddings_experimental(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
+    """Pandas UDF function that transforms batches of rows into fingerprints, using an embedding model.
+
+    Args:
+        iterator (Iterator[pd.Series]): input batch
+
+    Yields:
+        Iterator[pd.Series]: output batch
+    """
+
+    def tokenize(text: str, limit: int) -> list[str]:
+        # TODO: implement overlap (about 10%)
+        return [text[i : i + limit] for i in range(0, len(text), limit)]
+
+    def quantize(embedding: list[float]) -> bytes:
+        if not embedding:
+            return b""
+        arr = np.array(embedding, dtype=np.float32)
+        return np.packbits(arr >= 0).tobytes()
+
+    # Ollama provides a handy Python API for queries, but it's not usable
+    # in a Conda environment, because the embedding model is hosted in the base environment.
+    # As a workaround, the HTTP API are used here.
+    session = requests.Session()
+
+    for series in iterator:
+        text_list = series.tolist()
+        chunks: list[str] = []
+        owners: list[int] = []
+        for i, text in enumerate(text_list):
+            for chunk in tokenize(text, CTX_SIZE // 2):
+                chunks.append(chunk)
+                owners.append(i)
+        acc = np.zeros((len(text_list), 1024), dtype=np.float32)
+
+        # Iterate over each batch
+        for i in range(0, len(chunks), BATCH_SIZE):
+            batch, owners = chunks[i : i + BATCH_SIZE], owners[i : i + BATCH_SIZE]
+            try:
+                payload = {"model": MODEL, "input": batch}
+                response = session.post(OLLAMA_URL, json=payload, timeout=60)
+                response.raise_for_status()
+                data = response.json()
+                batch_res = data.get("embeddings", [])
+                for o, emb in zip(owners, batch_res):
+                    acc[o] += np.asarray(emb, dtype=np.float32)
+
+            except Exception as e:
+                # Padded with None, the output series must have the same number
+                # of elements as the input series
+                print(e)
+        quantized_embeddings = [quantize(acc[j].tolist()) for j in range(len(text_list))]
+        yield pd.Series(quantized_embeddings)
 
 
 def make_fingerprints(

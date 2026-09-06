@@ -89,7 +89,7 @@ The goal for this phase is to compare fingerprints from two datasets, called *co
 in order to find pairs of fingerprints which Hamming distance is less than $K$, a fixed integer value.
 The reference paper [@original_paper] approaches this problem by splitting each fingerprint into at least $K+n$ *partitions*, for $n > 0$.
 This grants a useful property: if two fingerprints are near-duplicate by a factor of $K$, then at least $n$ of their $K+n$ partitions must be equal 
-(the opposite doesn't hold - the other partitions might have more than $K$ different bits).
+(the opposite doesn't hold - other partitions might have more than $K$ different bits).
 The optimal number of partitions is derived by the following formula:
 $$X(f, k, d) = \begin{cases} 
 1 & \text{if } d < \tau \\ 
@@ -99,9 +99,7 @@ where $f$ is the size of each fingerprint, $K$ is the maximum allowed Hamming di
 
 Once the partitions are composed, the original paper [@original_paper] suggest to sort the fingerprints of *corpus* in an increasing order for each partition 
 and run a binary search algorithm over the bits of the partition, in order to find all matches.
-In a distributed environment, it's possible to parallelize this easily by assigning a partition to each node.
-It's possible to optimize the space in memory of the partitions by using an Huffman code to compress the fingerprints most important bits.
-
+In a distributed environment, it's easily possible to parallelize this by assigning a matching *corpus* and *query* partition to each node.
 
 ## Optimizations
 Manku et al. [@original_paper] provided some guidelines about optimizing the processing in clusters, which is necessary for very large datasets. In particular, for contexts where the partitions are distributed across nodes, it's possible to save some space using an Huffman code to compress 

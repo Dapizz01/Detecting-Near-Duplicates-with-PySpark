@@ -80,5 +80,5 @@ def create_fingerprints(
                 output_col=output_col,
                 fingerprint_size=fingerprint_size,
             )
-    df = df.drop("cleaned_text")
+    # df = df.drop("cleaned_text")
     return df
