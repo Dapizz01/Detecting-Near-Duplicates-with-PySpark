@@ -30,26 +30,27 @@ def make_fingerprints(
     assert input_col in df.columns
     assert shingle_size < fingerprint_size
 
-    df = (
-        df.withColumn("fingerprint_size", F.lit(fingerprint_size))
-        .withColumn("window_size", F.lit(shingle_size))
-        .withColumn(
+    df = df.withColumn("fingerprint_size", F.lit(fingerprint_size)).withColumn(
+        "window_size", F.lit(shingle_size)
+    )
+    if over_words:
+        df = df.withColumn(
             output_col,
-            F.when(
-                F.lit(over_words) == F.lit(True),
-                simhash_shingles_over_chars(
-                    F.col(input_col),  # type: ignore
-                    F.col("window_size"),  # type: ignore
-                    F.col("fingerprint_size"),  # type: ignore
-                ),
-            ).otherwise(
-                simhash_shingles_over_words(
-                    F.col(input_col),  # type: ignore
-                    F.col("window_size"),  # type: ignore
-                    F.col("fingerprint_size"),  # type: ignore
-                )
+            simhash_shingles_over_words(
+                text=F.col(input_col),  # type: ignore
+                window_size=F.col("window_size"),  # type: ignore
+                fingerprint_size=F.col("fingerprint_size"),  #  type: ignore # type: ignore
             ),
         )
-    )
+    else:
+        df = df.withColumn(
+            output_col,
+            simhash_shingles_over_chars(
+                text=F.col(input_col),
+                window_size=F.col("window_size"),
+                fingerprint_size=F.col("fingerprint_size"),
+            ),
+        )
+
     df = df.drop("fingerprint_size", "window_size")
     return df

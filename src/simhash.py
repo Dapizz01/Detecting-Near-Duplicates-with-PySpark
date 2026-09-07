@@ -89,7 +89,7 @@ def fastsimhash(hashes: list[bytes]) -> bytes:
         bytes: a fingerprint
     """
     if hashes is None or len(hashes) == 0:
-        raise ValueError("[fastsimhash] An empty byte_list has been passed to fast_merge")
+        raise ValueError("[fastsimhash] An empty byte_list has been passed.")
     n = len(hashes)
     hash_len = len(hashes[0])  # Returns num of bytes in an hash
     # Aggregates hashes into a matrix.
@@ -146,9 +146,14 @@ def simhash_shingles_over_chars(
     text: pd.Series, window_size: pd.Series, fingerprint_size: pd.Series
 ) -> pd.Series:
     def compute(text: str, window_size: int, fingerprint_size: int) -> bytes:
-        if text is None or not text.strip():
+        if text is None or text.strip() == "":
             raise ValueError(f"[simhash_shingles_over_chars] The input text ({text}) is empty.")
-        shingles = [text[i : i + window_size] for i in range(len(text) - window_size + 1)]
+        if window_size <= len(text):
+            shingles = [text]
+        else:
+            shingles = [text[i : i + window_size] for i in range(len(text) - window_size + 1)]
+        if shingles == []:
+            raise Exception("Test exception!")
         hashes = [
             blake2b(shingle.encode(), digest_size=int(fingerprint_size / 8)).digest()
             for shingle in shingles
@@ -166,9 +171,12 @@ def simhash_shingles_over_words(
         if text is None or not text.strip():
             raise ValueError(f"[simhash_shingles_over_words] The input text ({text}) is empty.")
         words = text.split()
-        shingles = [
-            "".join(words[i : i + window_size]) for i in range(len(words) - window_size + 1)
-        ]
+        if len(words) <= window_size:
+            shingles = words
+        else:
+            shingles = [
+                "".join(words[i : i + window_size]) for i in range(len(words) - window_size + 1)
+            ]
         hashes = [
             blake2b(shingle.encode(), digest_size=int(fingerprint_size / 8)).digest()
             for shingle in shingles

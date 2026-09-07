@@ -44,7 +44,7 @@ def create_fingerprints(
         df.withColumn("cleaned_text", F.regexp_replace(F.col(input_col), r"[\n\r\t]", ""))
         .withColumn("cleaned_text", F.lower(F.col("cleaned_text")))
         .withColumn("cleaned_text", F.regexp_replace(F.col("cleaned_text"), r"[^a-z\s]", ""))
-        .dropna()
+        # .dropna()
     )
     match model:
         case "bag_of_words":
@@ -76,9 +76,9 @@ def create_fingerprints(
         case "embeddings":
             df = embeddings.make_fingerprints(
                 df,
-                input_col="cleaned_text",
+                input_col=input_col,
                 output_col=output_col,
                 fingerprint_size=fingerprint_size,
             )
-    # df = df.drop("cleaned_text")
+    df = df.drop("cleaned_text")
     return df

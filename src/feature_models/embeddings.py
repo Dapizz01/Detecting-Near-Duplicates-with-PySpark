@@ -12,6 +12,7 @@ OLLAMA_URL = "http://localhost:11434/api/embed"
 MODEL = "Qwen3-embedding:0.6b"
 BATCH_SIZE = 16
 CTX_SIZE = 1500
+PROMPT = "Instruct: Retrieve semantically equivalent texts.\nQuery: "
 
 
 @F.pandas_udf(BinaryType())  # type: ignore # noqa: F821
@@ -26,11 +27,11 @@ def get_embeddings(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
     """
 
     # TODO: implement sanity check (strings must be lower than a threshold, otherwise memory usage goes through the roof)
-    def quantize(embedding: list[float]) -> bytes:
+    def quantize(embedding: list[float], threshold: float) -> bytes:
         if not embedding:
             return b""
         arr = np.array(embedding, dtype=np.float32)
-        return np.packbits(arr >= 0).tobytes()
+        return np.packbits(arr >= threshold).tobytes()
 
     # Ollama provides a handy Python API for queries, but it's not usable
     # in a Conda environment, because the embedding model is hosted in the base environment.
@@ -39,27 +40,33 @@ def get_embeddings(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
 
     for series in iterator:
         text_list = series.tolist()
-        embeddings = []
+        acc = np.zeros((len(text_list), 1024), dtype=np.float32)
 
         # Iterate over each batch
         for i in range(0, len(text_list), BATCH_SIZE):
             batch = text_list[i : i + BATCH_SIZE]
             try:
-                payload = {"model": MODEL, "input": batch}
+                prompts = [PROMPT + chunk for chunk in batch]
+                payload = {"model": MODEL, "input": prompts}
                 response = session.post(OLLAMA_URL, json=payload, timeout=60)
                 response.raise_for_status()
                 data = response.json()
                 batch_res = data.get("embeddings", [])
+                for offset, emb in enumerate(batch_res):
+                    acc[i + offset] = emb
 
-                embeddings.extend([quantize(emb) for emb in batch_res])
-                # Output: [b"\x01\x02", b"...", ...]
-            except Exception:
-                # Padded with None, the output series must have the same number
-                # of elements as the input series
-                embeddings.extend([None] * len(batch))
-        yield pd.Series(embeddings)
+            except Exception as e:
+                raise RuntimeError(
+                    "[get_embeddings] Error generating embeddings. Ollama might be down, or not working properly.",
+                    e,
+                )
+        quantized_embeddings = [
+            quantize(acc[j].tolist(), float(np.median(acc))) for j in range(len(text_list))
+        ]
+        yield pd.Series(quantized_embeddings)
 
 
+# TODO: experimental. Works on larger documents, for some reason stops working after 16 fingerprints (a batch)
 @F.pandas_udf(BinaryType())  # type: ignore # noqa: F821
 def get_embeddings_experimental(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
     """Pandas UDF function that transforms batches of rows into fingerprints, using an embedding model.
@@ -72,14 +79,13 @@ def get_embeddings_experimental(iterator: Iterator[pd.Series]) -> Iterator[pd.Se
     """
 
     def tokenize(text: str, limit: int) -> list[str]:
-        # TODO: implement overlap (about 10%)
         return [text[i : i + limit] for i in range(0, len(text), limit)]
 
-    def quantize(embedding: list[float]) -> bytes:
+    def quantize(embedding: list[float], threshold: float) -> bytes:
         if not embedding:
             return b""
         arr = np.array(embedding, dtype=np.float32)
-        return np.packbits(arr >= 0).tobytes()
+        return np.packbits(arr >= threshold).tobytes()
 
     # Ollama provides a handy Python API for queries, but it's not usable
     # in a Conda environment, because the embedding model is hosted in the base environment.
@@ -100,7 +106,8 @@ def get_embeddings_experimental(iterator: Iterator[pd.Series]) -> Iterator[pd.Se
         for i in range(0, len(chunks), BATCH_SIZE):
             batch, owners = chunks[i : i + BATCH_SIZE], owners[i : i + BATCH_SIZE]
             try:
-                payload = {"model": MODEL, "input": batch}
+                prompts = [PROMPT + chunk for chunk in batch]
+                payload = {"model": MODEL, "input": prompts}
                 response = session.post(OLLAMA_URL, json=payload, timeout=60)
                 response.raise_for_status()
                 data = response.json()
@@ -109,10 +116,15 @@ def get_embeddings_experimental(iterator: Iterator[pd.Series]) -> Iterator[pd.Se
                     acc[o] += np.asarray(emb, dtype=np.float32)
 
             except Exception as e:
-                # Padded with None, the output series must have the same number
-                # of elements as the input series
-                print(e)
-        quantized_embeddings = [quantize(acc[j].tolist()) for j in range(len(text_list))]
+                raise RuntimeError(
+                    "[get_embeddings] Error generating embeddings. Ollama might be down, or not working properly.",
+                    e,
+                )
+        # Qwen3-embeddings isn't a 0-centered model.
+        # In order to provide a better quantization, the threshold to distinguish 0/1 is the median of all weights.
+        # Mean: add.mean()
+        # Median: float(np.median(acc)))
+        quantized_embeddings = [quantize(acc[j].tolist(), 0) for j in range(len(text_list))]
         yield pd.Series(quantized_embeddings)
 
 

@@ -25,6 +25,7 @@ def read_llm_paraphrases() -> DataFrame:
         "is_near_duplicate",
         F.when(F.col("is_near_duplicate") == 1, F.lit(True)).otherwise(F.lit(False)),
     )
+    df = df.filter("text1 != ''").filter("text2 != ''").dropna()
     return df.withColumnsRenamed({"text1": "data1", "text2": "data2"})
 
 
@@ -36,7 +37,7 @@ def read_paws() -> DataFrame:
         F.when(F.col("label") == 1, F.lit(True)).otherwise(F.lit(False)),
     )
     df = df.drop("label")
-    return df.withColumnsRenamed({"id": "ID", "sentence1": "data1", "sentence2": "data2"})
+    return df.withColumnsRenamed({"id": "ID", "sentence1": "data1", "sentence2": "data2"}).dropna()
 
 
 def read_atn_sampled() -> DataFrame:
@@ -61,25 +62,21 @@ def read_wikipedia(variant: str) -> DataFrame:
     df = df.drop("is_near_duplicate")
     return df.withColumnsRenamed(
         {"id": "ID", "text": "data1", "text2": "data2", "is_dup": "is_near_duplicate"}
-    )
+    ).dropna()
 
 
-def read_qqp(n: int) -> DataFrame:
+def read_qqp() -> DataFrame:
     """Reads the Quora Question Pair dataset as a PySpark DataFrame.
 
     Returns:
         DataFrame: The QQP dataset, with the schema ("ID": int, "data1": string, "data2": string)
     """
     spark = get_spark()
-    df = (
-        spark.read.csv(
-            str(data_path("quora_duplicate_questions.tsv")),
-            header=True,
-            sep="\\t",
-            inferSchema=True,
-        )
-        .dropna()
-        .limit(n)
+    df = spark.read.csv(
+        str(data_path("quora_duplicate_questions.tsv")),
+        header=True,
+        sep="\\t",
+        inferSchema=True,
     )
     df = df.withColumn(
         "is_near_duplicate", F.when(F.col("is_duplicate") == 1, F.lit(True)).otherwise(F.lit(False))
