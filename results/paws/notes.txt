@@ -1,0 +1,2 @@
+Selected dataset: paws, 251 rows.
+This sample has 112 near-duplicate rows and 139 NON near-duplicate rows.

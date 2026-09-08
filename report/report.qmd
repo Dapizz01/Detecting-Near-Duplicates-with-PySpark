@@ -27,12 +27,12 @@ fig-align: center
 # Introduction
 Detecting duplicates in a dataset is crucial for tasks such as web crawling or AI model training, as it frees up computational resources.
 A straightforward approach to solve this involves hashing the data and comparing all rows via a Cartesian product.
-However, this approach is fragile: minor differences in the data might produce entirely different hashes, which is undesirable.
+However, this approach is fragile: minor syntax differences in the data might produce entirely different hashes, which is undesirable.
 Moreover, the time complexity of a Cartesian product is $O(n^2)$, making it untractable for large datasets.
 The approach proposed by Manku et al. [@original_paper] suggest to identify near-duplicates instead.
 This method aims to generate similar hashes for similar data, leveraging this property to optimize the comparison algorithm.
-Their proposed feature models are benchmarked against the PAWS dataset [@paws], a corpus of paraphrased sentences, and a modified Wikipedia dataset [@wikipedia_dataset].
-Lastly, their algorithm is ran on a subset of the C5 dataset [@c5], a collection of web crawls.
+It's also tested whether the algorithm is robust enough to find semantical near-duplicates, using a transformer-based embedding model.
+Lastly, some of the cited feature models and the proposed fingerprint matching algorithm are benchmarked against a variety of datasets, showcasing the efficiency of the suggested algorithm.
 
 # Methodology
 The methodology proposed by Manku et al. [@original_paper] can be divided into a two-part pipeline.
@@ -79,9 +79,8 @@ Furthermore, maintenance introduces additional overhead, as the weights of each 
 An embedding model is a machine learning algorithm that maps text into a vector capturing its semantic meaning.
 In this study, a transformer-based model, *Qwen3-embedding-0.6b* [@qwen3embedding], is used and executed locally.
 While all previous models rely on syntax to extract features, 
-embedding models operate on semantics, allowing for the detection of semantically-near-duplicate text.
+embedding models operate on semantics, allowing for the detection of semantically near-duplicate text.
 
-<!-- Double-checked up to here -->
 
 ## 2. Fingerprint Matching
 Now every text in the dataset has an associated fingerprint.
@@ -97,15 +96,21 @@ $$X(f, k, d) = \begin{cases}
 \end{cases}$$
 where $f$ is the size of each fingerprint, $K$ is the maximum allowed Hamming distance, $d$ is the $log_2$ cardinality of the dataset and $p_min$ is the maximum allowed cardinality of the candidate set (in $log_2$).
 
-Once the partitions are composed, the original paper [@original_paper] suggest to sort the fingerprints of *corpus* in an increasing order for each partition 
-and run a binary search algorithm over the bits of the partition, in order to find all matches.
-In a distributed environment, it's easily possible to parallelize this by assigning a matching *corpus* and *query* partition to each node.
-
-## Optimizations
-Manku et al. [@original_paper] provided some guidelines about optimizing the processing in clusters, which is necessary for very large datasets. In particular, for contexts where the partitions are distributed across nodes, it's possible to save some space using an Huffman code to compress 
+Once the partitions are composed, Manku et al. [@original_paper] approach can be summerized as follows: \
+1. Each partition is sorted and compressed, using an Huffman code on the prefix of the fingerprints \
+2. Partitions are distributed to workers, so that partitions with matching schemas are sent to the same worker \
+3. Perform a binary search on all *query* rows, probing *corpus* - matching rows are sent back to the driver as candidates \
+4. The hamming distance of each candidate row is calculated, filtering rows whose distance is over *K*. \
+Unfortunately this algorithm cannot be implemented in PySpark, the chosen distributed framework.
+A variant, that makes full use of PySpark's capabilities, will be tracted in the following chapter.
 
 # Implementation
 This implementation leverages the PySpark [@pyspark] framework, which allows to scale computing resources seamlessly.
+...
+
+## Fingerprint Matching
+As stated in the previous chapter, it's impossible to implement the matching algorithm suggested by Manku et al [@original_paper] with PySpark: the Spark engine doesn't allow random access to entries of the DataFrame.
+It's possible to bypass this limitation by loading all the partitions in memory, but ...
 
 # Results
 This is the results section.
