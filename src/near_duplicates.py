@@ -1,3 +1,4 @@
+import bisect
 import itertools
 import math
 from functools import lru_cache
@@ -5,7 +6,7 @@ from functools import lru_cache
 import pandas as pd
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
-from pyspark.sql.types import IntegerType, StructField, StructType
+from pyspark.sql.types import BinaryType, IntegerType, StructField, StructType
 
 from src.metrics import Metrics, extract_metrics
 from src.spark_utils import get_spark
@@ -301,3 +302,144 @@ def detect_near_duplicate_batch(
     )
 
     return spark.createDataFrame(result_rdd, schema=schema)
+
+
+def get_partitions_index_offset(lengths: list[int]) -> list[tuple[int, int]]:
+    base = 0
+    result = []
+    for length in lengths:
+        result.append((base, length))
+        base += length
+    return result
+
+
+def extract_bits(fingerprint: bytes, masks: list[int], schema: list[tuple[int, int]]) -> list[int]:
+    fp = int.from_bytes(fingerprint, "big")
+    return [(fp & mask) >> part[0] for mask, part in zip(masks, schema)]
+
+
+def binary_search_match(record):
+    # The RDD must have been previously cogrouped
+    # (all query and corpus rows with the same partition_ID are on the same worker)
+    _, (query_iter, corpus_iter) = record
+
+    # Load corpus iterator in worker memory,
+    # and sort based on the partition value
+    corpus_list = list(corpus_iter)
+    corpus_list.sort(key=lambda x: x[0])
+
+    # Extract all corpus partition values for binary search
+    corpus_keys = [x[0] for x in corpus_list]
+    results = []
+
+    # Iterate over all query rows
+    for q_part_val, q_payload in query_iter:
+        # Binary search for the matching corpus partition value
+        idx = bisect.bisect_left(corpus_keys, q_part_val)
+
+        # If the query partition key is not found in the corpus, bisect will returns
+        # the index where "it should be".
+        # Therefore, it's necessary to check the value indexed by bisect.
+        while idx < len(corpus_keys) and corpus_keys[idx] == q_part_val:
+            # Extract all corpus rows with same partition value.
+            _, c_payload = corpus_list[idx]
+
+            # Unpack the nested [(ID, fingerprint)] lists
+            for q_id, q_val in q_payload:
+                for c_id, c_val in c_payload:
+                    results.append((q_id, q_val, c_id, c_val))
+
+            # bisect_left returns the leftest element with matching key,
+            # the next element may also have a matching key.
+            idx += 1
+
+    return results
+
+
+def hamming_distance(val1: bytes, val2: bytes, K: int) -> bool:
+    return (int.from_bytes(val1, "big") ^ int.from_bytes(val2, "big")).bit_count() <= K
+
+
+# Assume that corpus and query have the same id_col and fingerprint_col
+def detect_near_duplicate_v2(
+    corpus: DataFrame,
+    query: DataFrame,
+    fingerprint_size: int,
+    K: int,
+    id_col: str,
+    fingerprint_col: str,
+) -> DataFrame:
+    assert id_col, fingerprint_col in corpus.columns
+    assert id_col, fingerprint_col in query.columns
+    assert K < fingerprint_size
+    # TODO: update terminology (iteration, schema, ...)
+
+    # corpus_log_size = int(math.log(corpus.count(), 2))
+    corpus_log_size = 20  # TODO: remove, for debug purposes
+    schema = partitions_schema(f=fingerprint_size, K=K, d=corpus_log_size, p_min=10)
+    # TODO: implement recursive algorithm
+    if schema[0] == 1:
+        # TODO: implement basic carthesian product
+        raise ValueError(
+            f"[detect_near_duplicate] Impossible to partition corpus using partitions with the following parameters:\ncorpus log size: {corpus_log_size}, K: {K}, fingerprint size: {fingerprint_size}"
+        )
+    partitions_lengths = get_partitions_index_offset(
+        get_blocks_sizes(fingerprint_size=fingerprint_size, num_blocks=schema[1][0]["r"])
+    )
+    masks = [((1 << offset) - 1) << index for index, offset in partitions_lengths]
+
+    corpus = corpus.select(id_col, fingerprint_col)
+    query = query.select(id_col, fingerprint_col)
+    corpus_rdd = corpus.rdd
+    query_rdd = query.rdd
+
+    corpus_partitions = (
+        corpus_rdd.flatMap(
+            lambda row: [
+                (partition_idx, partition, row[0], row[1])
+                for partition_idx, partition in enumerate(
+                    extract_bits(row[1], masks, partitions_lengths)
+                )
+            ]
+        )
+        .groupBy(lambda row: (row[0], row[1]))
+        .mapValues(lambda group: [item[2:] for item in group])
+        .map(lambda x: (x[0][0], (x[0][1], x[1])))
+        # .partitionBy(numPartitions=schema[1][0]["r"])
+        .partitionBy(8)
+    )
+    query_partitions = (
+        query_rdd.flatMap(
+            lambda row: [
+                (partition_idx, partition, row[0], row[1])
+                for partition_idx, partition in enumerate(
+                    extract_bits(row[1], masks, partitions_lengths)
+                )
+            ]
+        )
+        .groupBy(lambda row: (row[0], row[1]))
+        .mapValues(lambda group: [item[2:] for item in group])
+        .map(lambda x: (x[0][0], (x[0][1], x[1])))
+        # .partitionBy(numPartitions=schema[1][0]["r"])
+        .partitionBy(8)
+    )
+    grouped_rdd = query_partitions.cogroup(corpus_partitions)
+    result = (
+        grouped_rdd.flatMap(binary_search_match)
+        .distinct()
+        .filter(lambda row: hamming_distance(row[1], row[3], K))
+    )
+    result_schema = StructType(
+        [
+            StructField("query_ID", IntegerType(), True),
+            StructField("query_fingerprint", BinaryType(), True),
+            StructField("corpus_ID", IntegerType(), True),
+            StructField("corpus_fingerprint", BinaryType(), True),
+        ]
+    )
+    return result.toDF(result_schema)
+
+
+# K and fingerprint_size must be stored as metadata (prefix _) on the Parquet directory
+def detect_near_duplicate_cached(corpus_parquet_path: str, query: DataFrame) -> DataFrame:
+    return query
