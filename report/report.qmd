@@ -14,8 +14,6 @@ format:
     margin:
       x: 1in
       y: 1.25in
-    # columns: 2             # uncomment for a two-column paper look
-# number-sections: true        # numbered sections: 1, 1.1, 2 ...
 bibliography: references.bib
 execute:
   echo: false
@@ -28,7 +26,7 @@ fig-align: center
 Detecting duplicates in a dataset is crucial for tasks such as web crawling or AI model training, as it frees up computational resources.
 A straightforward approach to solve this involves hashing the data and comparing all rows via a Cartesian product.
 However, this approach is fragile: minor syntax differences in the data might produce entirely different hashes, which is undesirable.
-Moreover, the time complexity of a Cartesian product is $O(n^2)$, making it untractable for large datasets.
+Moreover, the time complexity of a Cartesian product is $O(n^2)$, making it unfeasable for large datasets.
 The approach proposed by Manku et al. [@original_paper] suggest to identify near-duplicates instead.
 This method aims to generate similar hashes for similar data, leveraging this property to optimize the comparison algorithm.
 It's also tested whether the algorithm is robust enough to find semantical near-duplicates, using a transformer-based embedding model.
@@ -48,6 +46,36 @@ Selecting the appropriate feature model and fingerprint size for a given dataset
 The original paper proposes various feature models, such as *Shingles* and *TF-IDF*, ultimately selecting the latter with a fingerprint size of 64 bits.
 In this work, four feature models are tested and compared:
 *Bag of Words*, *Shingles*, *TF-IDF* and *Embeddings*, using fingerprint sizes ranging from 32 bits up to 512 bits.
+
+## 2. Fingerprint Matching
+Now every text in the dataset has a fingerprint that represents it.
+The goal for this phase is to compare fingerprints from two datasets, called *corpus* and *query* for simplicity sake,
+in order to find pairs of fingerprints which Hamming distance is less than $K$, a fixed integer value.
+The reference paper [@original_paper] approaches this problem by splitting each fingerprint into at least $K+n$ *partitions*, for $n > 0$.
+This grants a useful property: if two fingerprints are near-duplicate by a factor of $K$, then at least $n$ of their $K+n$ partitions must be equal 
+(the opposite doesn't hold - other partitions might have more than $K$ different bits).
+A *schema* describes how partitions should be combined to efficiently find near-duplicate fingerprints.
+The optimal schema is derived by the following formula:
+$$X(f, k, d) = \begin{cases} 
+1 & \text{if } d < \tau \\ 
+\min_{r > k} \binom{r}{k} \cdot X\left(\frac{f k}{r}, k, d - \frac{(r-k)f}{r}\right) & \text{otherwise} 
+\end{cases}$$
+where $f$ is the size of each fingerprint, $K$ is the maximum allowed Hamming distance, $d$ is the $log_2$ size of the dataset and $p_min$ is the maximum allowed candidate set size (in $log_2$).
+
+Once the partitions are composed, Manku et al. [@original_paper] approach can be summerized as follows: \
+1. Each partition is sorted and compressed, using an Huffman code on the prefix of the fingerprints \
+2. Partitions are distributed to workers, so that partitions with matching schemas are sent to the same worker \
+3. Perform a binary search on all *query* rows, probing *corpus* - matching rows are marked as candidates \
+4. The hamming distance of each candidate row is calculated, filtering rows whose distance is over *K*. \
+
+# Implementation
+This implementation uses the PySpark [@pyspark] framework, which allows to trivially scale the computation to clusters, for large datasets.
+What follows are the most interesting parts.
+
+## Feature Models
+The implemented feature models are *Bag Of Words*, *Shingles*, *TF-IDF* and *Embeddings*.
+All of them are based on PySpark's DataFrames, using native methods from the package ```pyspark.sql.functions```.
+When necessary, Pandas UDF are adopted.
 
 ### Bag of Words
 For a given text, its features are the individual words it contains.
@@ -71,52 +99,65 @@ IDF stands for Inverse Document Frequency, which assigns higher weight to words 
 This filters out very common words, such as conjunctions and verbs:
 $$IDF(term, Dataset) = \log(\frac{\text{Total number of documents in Dataset}}{\text{Number of documents that contain term}})$$
 This is the feature model chosen in the original paper [@original_paper].
-However, it is computationally more expensive than previous models, 
+In PySpark, this model is implemented using ```pyspark.ml.features.IDF``` and ```pyspark.ml.features.CountVectorizer```. 
+Despite its higher accuracy, it's computationally more expensive than previous models, 
 which were "local" in the sense that computing the features of a single text did not require information about the entire dataset.
 Furthermore, maintenance introduces additional overhead, as the weights of each term must be recomputed whenever the dataset changes.
 
 ### Embeddings
 An embedding model is a machine learning algorithm that maps text into a vector capturing its semantic meaning.
-In this study, a transformer-based model, *Qwen3-embedding-0.6b* [@qwen3embedding], is used and executed locally.
+In this study, a transformer-based model, *Qwen3-embedding-0.6b* [@qwen3embedding], is used and executed locally using Ollama.
+Each weight of the generated embeddings is quantized to 0/1, taking the median of all weights as pivot, becoming a bit of the result fingerprint.
+Although suboptimal, this is required in order to build binary fingerprints.
+Processing embeddings of long texts can require large amount of memory for the KV cache.
 While all previous models rely on syntax to extract features, 
-embedding models operate on semantics, allowing for the detection of semantically near-duplicate text.
+embedding models operate on semantics, allowing for the detection of semantical near-duplicate text.
 
-
-## 2. Fingerprint Matching
-Now every text in the dataset has an associated fingerprint.
-The goal for this phase is to compare fingerprints from two datasets, called *corpus* and *query* for simplicity sake,
-in order to find pairs of fingerprints which Hamming distance is less than $K$, a fixed integer value.
-The reference paper [@original_paper] approaches this problem by splitting each fingerprint into at least $K+n$ *partitions*, for $n > 0$.
-This grants a useful property: if two fingerprints are near-duplicate by a factor of $K$, then at least $n$ of their $K+n$ partitions must be equal 
-(the opposite doesn't hold - other partitions might have more than $K$ different bits).
-The optimal number of partitions is derived by the following formula:
-$$X(f, k, d) = \begin{cases} 
-1 & \text{if } d < \tau \\ 
-\min_{r > k} \binom{r}{k} \cdot X\left(\frac{f k}{r}, k, d - \frac{(r-k)f}{r}\right) & \text{otherwise} 
-\end{cases}$$
-where $f$ is the size of each fingerprint, $K$ is the maximum allowed Hamming distance, $d$ is the $log_2$ cardinality of the dataset and $p_min$ is the maximum allowed cardinality of the candidate set (in $log_2$).
-
-Once the partitions are composed, Manku et al. [@original_paper] approach can be summerized as follows: \
-1. Each partition is sorted and compressed, using an Huffman code on the prefix of the fingerprints \
-2. Partitions are distributed to workers, so that partitions with matching schemas are sent to the same worker \
-3. Perform a binary search on all *query* rows, probing *corpus* - matching rows are sent back to the driver as candidates \
-4. The hamming distance of each candidate row is calculated, filtering rows whose distance is over *K*. \
-Unfortunately this algorithm cannot be implemented in PySpark, the chosen distributed framework.
-A variant, that makes full use of PySpark's capabilities, will be tracted in the following chapter.
-
-# Implementation
-This implementation leverages the PySpark [@pyspark] framework, which allows to scale computing resources seamlessly.
+## FastSimHash
+Charikar's SimHash algorithm [@simhash] takes as input a list of hashes and returns a fingerprint, 
+obtained by taking the most popular bit value for each index of the input hashes.
+This can be done in plain Python, or using matrix column sums with Numpy/Pandas.
+This can be hard to compute, if the feature model generates many hashes or the input text is large.
+In order to speed this process, the FastSimHash algorithm has been developed [@fast_simhash].
 ...
 
-## Fingerprint Matching
-As stated in the previous chapter, it's impossible to implement the matching algorithm suggested by Manku et al [@original_paper] with PySpark: the Spark engine doesn't allow random access to entries of the DataFrame.
-It's possible to bypass this limitation by loading all the partitions in memory, but ...
+## Fingerprint Detection with RDDs
+The detection algorithm from the original paper [@original_paper] has been replicated in PySpark using RDDs.
+In particular, *query* and *corpus* fingerprints are partitioned following the schema provided by the paper formula.
+All partitions are distributed across workers, based on their index: 
+*query* and *corpus* partitions with matching index are sent to the same worker, using ```repartition(...)``` and ```cogroup(...)```
+After sorting *corpus* partitions, for each *query* partition value, *corpus* partitions are probed using ```bisect```, a Python module for binary searches.
+Sorting and performing binary searches requires to load all *corpus* partitions in memory.
+Matching partition values are returned to the driver as candidates, whose Hamming distance will be computed and compared with $K$.
+The Huffman code compression is not implemented: in this work $K$ is not fixed, and it's expensive to compute
+all the Huffman codes of the *corpus* partition for each iteration.
+However, it is certainly recommended for production environments where fingerprints are stored, with a fixed $K$ value.
 
 # Results
-This is the results section.
 
-# Discussion
-This is the discussion section.
+## 1. Fingerprint Generation
+The proposed feature models are compared across two datasets: *llm-paraphrases* and *wikipedia*.
+Each row of these datasets contains two text columns and a source of truth column, which allows to compare how good is a certain feature model to another.
+The former dataset is semantic - two texts are considered near-duplicate iff they mean the same thing.
+The latter is syntactical - rows considered near-duplicate contain the same text, but with around 10% of noise (ie, altered words).
+
+### Semantic Duplicate Detection
+The semantic duplicate detection benchmark is performed on the llm-paraphrases dataset.
+In this case the embeddings model reaches the highest score, followed by TF-IDF and bag_of_words.
+This is within expectations: despite its small size, the embedding model outperforms classic NLP feature model on semantic similarities.
+Fingerprint sizes of at least 64 bits perform about the same, while 32 bits doesn't seem to be enough to represent features in this case.
+...
+![F1-Score for fingerprint size](images/llm_f1score_fingerprintsize.png)
+
+### Syntactical Duplicate Detection
+The syntactical duplicate detection benchmark is based on the wikipedia dataset [@wikipedia_dataset], modified for this task.
+Each row contains two wikipedia entries - the second entry can be a copy of the first one with about 10% of syntax noise, or talk about something completely different.
+All feature models achieve perfect scores, even on the smallest fingerprint size.
+...
+
+### Fingerprint Matching Performance
+...
 
 # Conclusion
-This is the conclusion section.
+The results have shown that the near-duplicate detection algorithm ideated by Manku et al [@original_paper] is consistent with literature.
+Also, it's flexible enough to support advanced feature models like embeddings, detecting semantic near-duplicates for low $K$ values.

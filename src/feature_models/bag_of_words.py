@@ -21,8 +21,6 @@ def make_fingerprints(
     """
     assert input_col in df.columns
 
-    df.filter(F.trim(F.col(input_col)) != "")
-
     df = (
         df.withColumn("fingerprint_size", F.lit(fingerprint_size))
         .withColumn(output_col, simhash_bow(F.col(input_col), F.col("fingerprint_size")))  # type: ignore

@@ -8,6 +8,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
 from pyspark.sql.types import BinaryType, IntegerType, StructField, StructType
 
+from src.config import SPARK_SHUFFLE_PARTITIONS
 from src.metrics import Metrics, extract_metrics
 from src.spark_utils import get_spark
 
@@ -402,11 +403,14 @@ def detect_near_duplicate_v2(
                 )
             ]
         )
+        # [(p_ID, p, fp_ID, fp), ...]
         .groupBy(lambda row: (row[0], row[1]))
+        # [((p_ID, p), [(p_ID, p, fp_ID, fp), (p_ID, p, fp_ID, fp), ...]), ...]
         .mapValues(lambda group: [item[2:] for item in group])
+        # [((p_ID, p), [(fp_ID, fp), (fp_ID, fp), ...]), ...]
         .map(lambda x: (x[0][0], (x[0][1], x[1])))
-        # .partitionBy(numPartitions=schema[1][0]["r"])
-        .partitionBy(8)
+        .partitionBy(numPartitions=int(SPARK_SHUFFLE_PARTITIONS))
+        # [(p_ID, (query_iterator, corpus_iterator)), ...]
     )
     query_partitions = (
         query_rdd.flatMap(
@@ -417,11 +421,14 @@ def detect_near_duplicate_v2(
                 )
             ]
         )
+        # [(p_ID, p, fp_ID, fp), ...]
         .groupBy(lambda row: (row[0], row[1]))
+        # [((p_ID, p), [(p_ID, p, fp_ID, fp), (p_ID, p, fp_ID, fp), ...]), ...]
         .mapValues(lambda group: [item[2:] for item in group])
+        # [((p_ID, p), [(fp_ID, fp), (fp_ID, fp), ...]), ...]
         .map(lambda x: (x[0][0], (x[0][1], x[1])))
-        # .partitionBy(numPartitions=schema[1][0]["r"])
-        .partitionBy(8)
+        .partitionBy(numPartitions=int(SPARK_SHUFFLE_PARTITIONS))
+        # [(p_ID, (query_iterator, corpus_iterator)), ...]
     )
     grouped_rdd = query_partitions.cogroup(corpus_partitions)
     result = (
@@ -438,8 +445,3 @@ def detect_near_duplicate_v2(
         ]
     )
     return result.toDF(result_schema)
-
-
-# K and fingerprint_size must be stored as metadata (prefix _) on the Parquet directory
-def detect_near_duplicate_cached(corpus_parquet_path: str, query: DataFrame) -> DataFrame:
-    return query
