@@ -138,13 +138,108 @@
 </div>
 
 </section>
-<section id="results" class="slide level2">
-<h2>Results</h2>
-<p>This is just a test.</p>
+<section class="slide level2">
+
+<h3 id="original-paper">Original paper</h3>
+
+<img data-src="media/paper_thumbnail.png" class="r-stretch"></section>
+<section id="why-is-near-duplicates-detection-interesting" class="slide level2">
+<h2>Why is near-duplicates detection interesting?</h2>
+<ul>
+<li>Web crawling</li>
+<li>Dataset sanitzation</li>
+<li>Spam detection and plagiarism</li>
+<li>Advanced file systems, capable of grouping similar files</li>
+<li>Antivirus softwares</li>
+<li>… and much more!</li>
+</ul>
 </section>
-<section id="another-slide" class="slide level2">
-<h2>Another slide</h2>
-<p>This is the result: <img data-src="../results/paws/f1score_confusionmatrix.png"></p>
+<section id="why-are-they-harder-to-detect-than-simple-duplicates" class="slide level2">
+<h2>Why are they harder to detect than simple duplicates?</h2>
+<p>Duplicates are commonly detected using hash functions.</p>
+<p>However, hash functions may return vastly different digests for very similar data. (example)</p>
+</section>
+<section id="how-are-near-duplicates-detectable" class="slide level2">
+<h2>How are near-duplicates detectable?</h2>
+<p>Feature models are used to extract features from data. Those features are hashed and combined into a fingerprint. This algorithm is known as SimHash. (example)</p>
+</section>
+<section id="which-feature-model-should-be-used" class="slide level2">
+<h2>Which feature model should be used?</h2>
+<p>For textual data, four different feature models are tested in this work:</p>
+<ol type="1">
+<li>Bag of words</li>
+<li>Shingles</li>
+<li>TF-IDF</li>
+<li>Embeddings</li>
+</ol>
+</section>
+<section id="feature-model-bag-of-words" class="slide level2">
+<h2>Feature Model: Bag of words</h2>
+<p>Each word in a text is considered a feature. Easy to compute, but cannot detect locality. (example)</p>
+</section>
+<section id="feature-model-shingles" class="slide level2">
+<h2>Feature Model: Shingles</h2>
+<p>A feature is a contiguous series of elements in a text. Elements can be words or characters, and might overlap. It can generate many features, resulting harder to compute, but can detect locality, to some degree. (example)</p>
+</section>
+<section id="feature-model-tf-idf" class="slide level2">
+<h2>Feature Model: TF-IDF</h2>
+<p>A more sophisticated variant of “Bag of words”. TF-IDF stands for Term Frequency - Inverse Document Frequency. Each word is weighted for their rarity, inside its text and in the whole dataset. Rare words have higher weights, while common words have lower weights. It requires to re-compute all fingerprints when the dataset changes, making it taxing to compute.</p>
+</section>
+<section id="feature-model-embeddings" class="slide level2">
+<h2>Feature Model: Embeddings</h2>
+<p>Each text is converted into a set of weights, using the embedding model Qwen3-embedding:0.6b. The fingerprint is obtained by quantizing each float weight to 0/1. Can be memory-hungry on large texts.</p>
+</section>
+<section id="how-are-feature-fingerprints-combined" class="slide level2">
+<h2>How are feature fingerprints combined?</h2>
+<p>All features of some data are combined by taking the most popular value for each bit index. This can be sped up using FastSimHash.</p>
+</section>
+<section id="fastsimhash" class="slide level2">
+<h2>FastSimHash</h2>
+<p>…</p>
+</section>
+<section id="how-are-near-duplicates-detected-in-pyspark" class="slide level2">
+<h2>How are near-duplicates detected in PySpark?</h2>
+<ol type="1">
+<li>Fingerprints are partitioned by a schema, computed at runtime.</li>
+<li>Fingerprints with the same partition are distributed across workers.</li>
+<li>Candidates are found by probing corpus partitions using binary search.</li>
+<li>Candidates having Hamming Distance higher than <span class="math inline">\(K\)</span> are discarded.</li>
+</ol>
+<p>(image)</p>
+</section>
+<section id="semantic-near-duplicates-llm-paraphrases-dataset-analysis" class="slide level2">
+<h2>Semantic near-duplicates: llm-paraphrases dataset analysis</h2>
+<p>… (screenshots)</p>
+</section>
+<section id="syntax-near-duplicates-wikipedia-dataset-analysis" class="slide level2">
+<h2>Syntax near-duplicates: wikipedia dataset analysis</h2>
+<p>… (screenshots)</p>
+</section>
+<section id="real-use-case-c5-dataset" class="slide level2">
+<h2>Real use-case: c5 dataset</h2>
+<p>… (screenshots)</p>
+</section>
+<section id="original-paper-improvements" class="slide level2">
+<h2>Original paper improvements</h2>
+<div class="columns">
+<div class="column" style="width:50%;">
+<ul>
+<li>Fingerprints of 64 bits</li>
+<li>Fixed <span class="math inline">\(K\)</span> value of <span class="math inline">\(3\)</span></li>
+<li>TF-IDF as feature model</li>
+</ul>
+</div><div class="column" style="width:50%;">
+<ul>
+<li>Fingerprints from 32 up to 512 bits</li>
+<li><span class="math inline">\(K\)</span> value of any size</li>
+<li>Four different feature models available</li>
+<li>FastSimHash</li>
+<li>Semantic near-duplicate detection</li>
+</ul>
+</div></div>
+</section>
+<section id="thanks" class="title-slide slide level1 center">
+<h1>Thanks!</h1>
 
 </section>
     </div>

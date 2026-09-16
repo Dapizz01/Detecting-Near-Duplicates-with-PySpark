@@ -62,11 +62,12 @@ $$X(f, k, d) = \begin{cases}
 \end{cases}$$
 where $f$ is the size of each fingerprint, $K$ is the maximum allowed Hamming distance, $d$ is the $log_2$ size of the dataset and $p_min$ is the maximum allowed candidate set size (in $log_2$).
 
-Once the partitions are composed, Manku et al. [@original_paper] approach can be summerized as follows: \
-1. Each partition is sorted and compressed, using an Huffman code on the prefix of the fingerprints \
-2. Partitions are distributed to workers, so that partitions with matching schemas are sent to the same worker \
-3. Perform a binary search on all *query* rows, probing *corpus* - matching rows are marked as candidates \
-4. The hamming distance of each candidate row is calculated, filtering rows whose distance is over *K*. \
+Once the partitions are composed, Manku et al. [@original_paper] approach can be summerized as follows:
+
+1. Each partition is sorted and compressed, using an Huffman code on the prefix of the fingerprints
+2. Partitions are distributed to workers, so that partitions with matching schemas are sent to the same worker
+3. Perform a binary search on all *query* rows, probing *corpus* - matching rows are marked as candidates
+4. The hamming distance of each candidate row is calculated, filtering rows whose distance is over *K*
 
 # Implementation
 This implementation uses the PySpark [@pyspark] framework, which allows to trivially scale the computation to clusters, for large datasets.
@@ -120,6 +121,7 @@ This can be done in plain Python, or using matrix column sums with Numpy/Pandas.
 This can be hard to compute, if the feature model generates many hashes or the input text is large.
 In order to speed this process, the FastSimHash algorithm has been developed [@fast_simhash].
 ...
+FastSimHash cannot be used for TF-IDF, because TF-IDF works with floating point weights.
 
 ## Fingerprint Detection with RDDs
 The detection algorithm from the original paper [@original_paper] has been replicated in PySpark using RDDs.
@@ -147,7 +149,7 @@ In this case the embeddings model reaches the highest score, followed by TF-IDF 
 This is within expectations: despite its small size, the embedding model outperforms classic NLP feature model on semantic similarities.
 Fingerprint sizes of at least 64 bits perform about the same, while 32 bits doesn't seem to be enough to represent features in this case.
 ...
-![F1-Score for fingerprint size](images/llm_f1score_fingerprintsize.png)
+![F1-Score for fingerprint size](media/llm_f1score_fingerprintsize.png)
 
 ### Syntactical Duplicate Detection
 The syntactical duplicate detection benchmark is based on the wikipedia dataset [@wikipedia_dataset], modified for this task.
@@ -156,7 +158,10 @@ All feature models achieve perfect scores, even on the smallest fingerprint size
 ...
 
 ### Fingerprint Matching Performance
-...
+As shown in ..., a dataset of $1,000,000$ 64-bit fingerprints, splitted between corpus and query in a 80:20 ratio, takes about ... seconds to compute all near-duplicates with $K=3$.
+This is ran on a MacBook Air M1 laptop.
+Higher values of $K$ significantly increase the required time, as expected:
+with the same environment, raising $K$ to $5$ takes ... seconds.
 
 # Conclusion
 The results have shown that the near-duplicate detection algorithm ideated by Manku et al [@original_paper] is consistent with literature.
