@@ -41,6 +41,9 @@ def read_paws() -> DataFrame:
 
 
 def read_atn_sampled() -> DataFrame:
+    raise NotImplementedError(
+        "[read_atn_sampled] This method is legacy. Uncomment this exception to unlock."
+    )
     spark = get_spark()
     df = spark.read.csv(
         str(data_path("all-the-news-sampled.csv")),
@@ -50,8 +53,10 @@ def read_atn_sampled() -> DataFrame:
 
 
 def read_wikipedia(variant: str) -> DataFrame:
+    assert (
+        variant in ("5percent", "10percent")
+    ), f"[read_wikipedia] The selected variant ({variant}) is not valid. Please, select one of '5percent' or '10percent'."
     spark = get_spark()
-    assert variant in ("5percent", "10percent")
     df = spark.read.csv(
         str(data_path(f"wikipedia_near_duplicate_{variant}.csv")), inferSchema=True, header=True
     )
@@ -86,6 +91,9 @@ def read_qqp() -> DataFrame:
 
 
 def read_qqp_benchmark(benchmark_id: int):
+    raise NotImplementedError(
+        "[read_qqp_benchmark] This method is outdated. Uncomment this exception to unlock."
+    )
     """Reads the Quora Question Pair benchmark dataset as a PySpark DataFrame.
 
     Args:
@@ -114,7 +122,9 @@ def read_qqp_benchmark(benchmark_id: int):
 
 
 def read_feature_benchmark(which: str):
-    # TODO: comments
+    raise NotImplementedError(
+        "[read_feature_benchmark] This method is outdated. Uncomment this exception to proceed."
+    )
     assert which in ("easy", "medium", "hard")
     spark = get_spark()
     df = spark.read.csv(

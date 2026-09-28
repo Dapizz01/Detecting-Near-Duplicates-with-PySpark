@@ -1,0 +1,2 @@
+Selected dataset: qqp, 199 rows.
+This sample has 76 near-duplicate rows and 123 NON near-duplicate rows.

@@ -12,6 +12,12 @@ def get_spark() -> SparkSession:
     """Creates a local SparkSession, using the parameters in the configuration file.
     Returns the instance of SparkSession if Spark is already initialized.
     """
+    # Checks if session is already active
+    active_session = SparkSession.getActiveSession()
+    if active_session is not None:
+        return active_session
+
+    # Generates a new session and returns it
     builder = (
         SparkSession.builder.appName(SPARK_APP_NAME)
         .master(SPARK_MASTER)

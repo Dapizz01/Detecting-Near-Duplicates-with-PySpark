@@ -9,16 +9,53 @@ format:
 
 ![](media/paper_thumbnail.png)
 
-## Why is near-duplicates detection interesting?
+## Original paper (cont.)
 
-- Web crawling
-- Dataset sanitzation
+The paper aims to:
+
+- Show that Charikar's SimHash algorithm is effective to generate similar hashes for similar content
+- Present an efficient algorithm that allows to detect near-duplicates pairs up to a (reasonably small) factor $K$
+
+In this work only the "batch" version of the proposed algorithm is implemented, using PySpark.
+
+## Types of near-duplicates {.smaller}
+
+Near-duplicates generally fall into two non-exclusive categories:
+
+:::: {.columns}
+
+::: {.column width="50%"}
+**Semantic**
+
+*Similar meaning:*
+
+> "a senior couple strolls along the beach while holding hands during sunset"  
+> $\approx$  
+> "an older couple walks hand in hand on the beach at sunset"
+:::
+
+::: {.column width="50%"}
+**Syntactic**
+
+*Similar structure:*
+
+> "The quiet librarian suddenly discovered a valuable manuscript inside the forgotten wooden cabinet"  
+> $\approx$  
+> "The quiet mechanic suddenly discovered a dangerous leak inside the forgotten engine cabinet"
+:::
+
+::::
+
+## Potential near-duplicate detection applications {.smaller}
+
+- Remove near-duplicate pages to improve web crawling processes efficiency
+- Sanitize datasets from near-duplicate entries
 - Spam detection and plagiarism
-- Advanced file systems, capable of grouping similar files
-- Antivirus softwares
+- Detect malwares from a known dataset of potentially malicious softwares
+- Build advanced file systems, able to bundle together files with similar content
 - ... and much more!
 
-## Why are they harder to detect than simple duplicates?
+## Duplicate vs. Near-duplicates
 
 Duplicates are commonly detected using hash functions.
 
@@ -40,11 +77,10 @@ flowchart LR
     text2 -->|hash| hash2
 ```
 
-## How are near-duplicates detectable?
+## Fingerprint generation
 
-Feature models are used to extract features from data.
-These features are hashed and combined into a fingerprint.
-This algorithm is known as SimHash.
+A fingerprint is a string of bits of some fixed length that identifies some data.
+Fingerprints are generated combining features extracted from data (SimHash algorithm).
 
 ```{mermaid}
 %%| fig-width: 8
@@ -61,9 +97,9 @@ flowchart LR
     feature3 --> fingerprint
 ```
 
-## Which feature model should be used?
+## Feature extraction models
 
-For textual data, four different feature models are tested in this work:
+For text data, four different feature models are tested in this work:
 
 1. Bag of words
 2. Shingles
@@ -100,8 +136,8 @@ flowchart LR
 ## Feature Model: Shingles
 
 A feature is a contiguous series of elements in a text.
-Elements can be words or characters, and might overlap.
-It can generate many features, resulting harder to compute, but can detect locality, to some degree.
+Elements can be words or characters, and can be overlapping.
+It can generate a large number of features but can detect locality, to some degree.
 
 ```{mermaid}
 %%| fig-width: 8
@@ -126,13 +162,13 @@ flowchart LR
     word3 --> hash3
 ```
 
-## Feature Model: TF-IDF {.scrollable}
+## Feature Model: TF-IDF {.smaller}
 
 A more sophisticated variant of "Bag of words".
 TF-IDF stands for Term Frequency - Inverse Document Frequency.
 Each word is weighted for their rarity, inside its text and in the whole dataset.
 Rare words have higher weights, while common words have lower weights.
-It requires to re-compute all fingerprints when the dataset changes, making it taxing to compute.
+It requires to re-compute all fingerprints when the dataset changes, making it taxing to compute and maintain.
 
 ```{mermaid}
 %%| fig-width: 8
@@ -160,17 +196,19 @@ flowchart LR
 ## Feature Model: Embeddings
 
 Each text is converted into a set of weights, using the embedding model Qwen3-embedding:0.6b.
-The fingerprint is obtained by quantizing each float weight to 0/1.
-Can be memory-hungry on large texts.
+The fingerprint is obtained by quantizing each float weight to 0/1, using the median as pivot.
+Can require large amount of memory for long inputs.
 
-## Feature Models Performance
+## Feature models performance {.smaller}
 
-Performed on the *llm-paraphrases* dataset, composed of short strings.
+Performed on the *llm-paraphrases* dataset.
+
 TF-IDF is the slowest model: it requires to create a frequency map of all words in the dataset.
-The embedding model may perform worse than others on long strings.
+Embeddings performance might get worse on datasets with longer texts.
+
 ![](media/feature_models_performance.png)
 
-## How are feature fingerprints combined?
+## SimHash
 
 All features of some data are combined by taking the most popular value for each bit index.
 This can be sped up using FastSimHash.
@@ -196,100 +234,174 @@ flowchart LR
 ## FastSimHash
 ...
 
-## How are near-duplicates detected in PySpark? {.scrollable}
+## Near-duplicate detection algorithm in PySpark (batch version) {.smaller}
 
-1. Fingerprints are partitioned leveraging the pigeonhole principle.
-2. Fingerprints with the same partition are distributed across workers.
-3. Candidates are found by probing corpus partitions using binary search (corpus partitions must be ordered).
-4. Candidates having Hamming Distance higher than $K$ are discarded.
+Suppose to have two fingerprint DataFrames, *query* and *dataset* (*query* is always the smaller DataFrame).
 
+1. *query* fingerprints are split into at least $K$ partitions (pigeonhole principle)
+2. *query* partitions are collected in a hash table and distributed to all workers, alongside *query* itself
+3. Workers iterate over *dataset*, splitting each row into partitions and checking if it matches at least one of the *query* partitions
+4. Fingerprint pairs with matching partitions *might* be near-duplicate: if their Hamming distance is less than $K$ they are considered a near-duplicate pair
+
+This algorithm prioritizes locality: only *query* fingerprints and partitions are once sent from the driver to the workers.
+
+## Near-duplicate detection algorithm in PySpark (batch version): schema
+<!-- TODO: remake this -->
 ```{mermaid}
-%%| fig-width: 10
+%%| fig-width: 8
 %%| fig-height: 8
 flowchart TD
-    subgraph Data
-        corpus["Corpus dataset"]
-        query["Query dataset"]
+    subgraph Driver1 ["Driver"]
+        query_part_gen["Query partitions generation"]
     end
-    subgraph Partitions ["Partitions (K=1)"]
-        corpus_part1["Corpus partition 1"]
-        corpus_part2["Corpus partition 2"]
-        query_part1["Query partition 1"]
-        query_part2["Query partition 2"]
+    subgraph Worker1
+        dataset_part_gen1["Dataset partitions generation"]
+        part_matching1["Retrieve pairs with matching partitions"]
+        candidate_filter1["Filter out pairs with Hamming distance >= K"]
     end
-    subgraph Workers
-        worker1["Worker 1"]
-        worker2["Worker 2"]
+    subgraph Worker2
+        dataset_part_gen2["Dataset partitions generation"]
+        part_matching2["Retrieve pairs with matching partitions"]
+        candidate_filter2["Filter out pairs with Hamming distance >= K"]
     end
-    subgraph Candidates
-        candidates1["Candidates1"]
-        candidates2["Candidates2"]
+    subgraph Driver2 ["Driver"]
+        result["All near-duplicate pairs"]
     end
-    result["Near-duplicates list"]
-    corpus --> corpus_part1 & corpus_part2
-    query --> query_part1 & query_part2
-    corpus_part1 --> worker1
-    corpus_part2 --> worker2
-    query_part1 --> worker1
-    query_part2 --> worker2
-    worker1 --> candidates1
-    worker2 --> candidates2
-    candidates1 -->|Hamming distance filter| result
-    candidates2 -->|Hamming distance filter| result
+    Query --> Driver1
+    query_part_gen --> dataset_part_gen1
+    query_part_gen --> dataset_part_gen2
+    dataset_part_gen1 --> part_matching1
+    part_matching1 --> candidate_filter1
+    dataset_part_gen2 --> part_matching2
+    part_matching2 --> candidate_filter2
+    Worker1 --> Driver2
+    Worker2 --> Driver2
 ```
 
-## Detection time/space complexity
-
-Considering $c$ the corpus size and $q$ the query size:
-- $O(c\log{c}$ for sorting corpus partitions (can be cached)
-- $O(q\log{c}$ for 
-
-## ... what's the catch?
+## ... but why does this work only for small $K$ values? {.smaller}
 
 The graph below shows the expected number of candidates for each query row at different $K$ values.
 Higher $K$ values forces the algorithm to adopt small partitions, which generate a large amount of candidates.
 
-![](media/detection_scaling.png) {width=100%}
+![](media/detection_scaling.png)
 
 
-## Semantic near-duplicates: llm-paraphrases dataset analysis
+## Semantic near-duplicates: qqp dataset analysis {.scrollable}
 
-::: {.r-stack}
+Sample of 199 rows with 76 near-duplicate rows.
 
-<!-- Put screenshot of dataset head -->
+```{python}
+#| output: asis
+import pandas as pd
 
-![](media/llm_f1score_fingerprintsize.png){.fragment .fade-out fragment-index=1}
+def truncate_chars(text, max_chars):
+    text = str(text)
+    if len(text) > max_chars:
+        return text[:max_chars] + "..."
+    return text
 
-![](media/paper_thumbnail.png){.fragment .fade-in-then-out fragment-index=1}
+df = pd.read_csv("media/qqp/qqp_sample.csv")[["data1", "data2", "is_near_duplicate"]]
+for col in df.columns:
+    df[col] = df[col].apply(lambda x: truncate_chars(x, max_chars=30))
 
-![](media/llm_f1score_fingerprintsize.png){.fragment .fade-in fragment-index=2}
-:::
+print(df.to_markdown())
+```
 
-## Syntax near-duplicates: wikipedia dataset analysis
+## qqp: f1 score - fingerprint size
 
-... (screenshots)
+![](media/qqp/f1score_fingerprintsize.png)
 
-## Real use-case: c5 dataset
+## qqp: f1 score - feature model
 
-... (screenshots)
+![](media/qqp/f1score_model.png)
 
-## Original paper improvements
+## qqp: feature model performance compared to literature
 
-:::: {.columns}
+![](media/qqp/literature.png)
 
-::: {.column width="50%"}
-- Fingerprints of 64 bits
-- Fixed $K$ value of $3$
-- TF-IDF as feature model
-:::
+## qqp: f1 score - K value
 
-::: {.column width="50%"}
-- Fingerprints from 32 up to 512 bits
-- $K$ value of any size
+Computed on 64 bits fingerprints.
+
+![](media/qqp/f1score_K.png)
+
+## qqp: f1 score - heatmap
+
+![](media/qqp/f1score_heatmap.png)
+
+## qqp: f1 score - shingle variants
+
+3-shingles over words seem more effective.
+
+![](media/qqp/f1score_shingle.png)
+
+## qqp: precision - recall
+
+The $K$ sweet spot is around 5 to 6.
+
+![](media/qqp/precision_recall.png)
+
+## Syntax near-duplicates: wikipedia dataset analysis {.scrollable}
+
+Dataset composed of 1000 wikipedia entries pairs.
+Half of them are the same entry but with some random noise (altered words), from 5% to 10%.
+The other are pairs of completely different entries.
+Due to the large size of each entry, the Embeddings feature model is not considered for this analysis.
+
+```{python}
+#| output: asis
+import pandas as pd
+
+def truncate_chars(text, max_chars):
+    text = str(text)
+    if len(text) > max_chars:
+        return text[:max_chars] + "..."
+    return text
+
+df = pd.read_csv("media/wikipedia/wikipedia_sample.csv")[["data1", "data2", "is_near_duplicate"]]
+for col in df.columns:
+    df[col] = df[col].apply(lambda x: truncate_chars(x, max_chars=30))
+
+print(df.to_markdown())
+```
+
+## Wikipeida: f1score - feature model heatmap
+
+All features models are strong enough to ignore syntactical noise.
+
+![](media/wikipedia/f1score_confusionmatrix.png)
+
+## Real use-case: c5 dataset {.scrollable}
+
+A fork of the popular c4 dataset, contains Italian web pages content.
+This dataset isn't deduplicated.
+
+```{python}
+#| output: asis
+import pandas as pd
+
+def truncate_chars(text, max_chars):
+    text = str(text)
+    if len(text) > max_chars:
+        return text[:max_chars] + "..."
+    return text
+
+df = pd.read_csv("media/c5/c5_sample.csv")[["data"]]
+for col in df.columns:
+    df[col] = df[col].apply(lambda x: truncate_chars(x, max_chars=75))
+
+print(df.to_markdown())
+```
+
+## c5: results
+...
+
+## Improvements over the original paper
+
+- Fingerprints from 32 up to 512 bits (instead of fixed 64 bits)
+- $K$ value of any size (instead of $K = 3$)
 - Four different feature models available
-- FastSimHash
 - Semantic near-duplicate detection
-:::
-::::
+- FastSimHash
 
 # Thanks!

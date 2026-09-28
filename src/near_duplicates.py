@@ -6,7 +6,7 @@ from functools import lru_cache
 import pandas as pd
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
-from pyspark.sql.types import BinaryType, IntegerType, StructField, StructType
+from pyspark.sql.types import BinaryType, IntegerType, Row, StringType, StructField, StructType
 
 from src.config import SPARK_SHUFFLE_PARTITIONS
 from src.metrics import Metrics, extract_metrics
@@ -36,7 +36,7 @@ def detect_near_duplicates_pairs(df: DataFrame, f1: str, f2: str, K: int) -> Dat
 def detect_near_duplicates_benchmark(
     df: DataFrame, f1_col: str, f2_col: str, truth_col: str, K: int
 ) -> Metrics:
-    """Benchmarks feature models efficacy, by comparing already established pairs of data.
+    """Benchmarks feature models, by comparing already established pairs of data.
 
     Args:
         df (DataFrame): the input PySpark DataFrame
@@ -114,6 +114,64 @@ def partitions_schema(f: int, K: int, d: int, p_min: int) -> tuple[int, list[dic
         return best
 
     return X(f=f, d=d)
+
+
+### DETECT_NEAR_DUPLICATE_NEW_V2 ###
+
+
+def create_partition_map(entries: list[Row], schema: tuple) -> dict[tuple, list]:
+    return {(1, 2, 3): [1, 2, 3]}
+
+
+# Like detect_near_duplicate_batch, but with support for multiple tables.
+def detect_near_duplicate_batch_v2(
+    dataset: DataFrame,
+    query: DataFrame,
+    fingerprint_col: str,
+    id_col: str,
+    fingerprint_size: int,
+    dataset_size: int,
+    K: int,
+    max_match_per_probe: int,
+) -> DataFrame:
+    assert (
+        id_col != fingerprint_col
+    ), f"[detect_near_duplicate_new_v2] Fingerprint column and ID column names are the same ({id_col})"
+    assert (
+        (id_col, fingerprint_col) in dataset.columns
+    ), f"[detect_near_duplicate_new_v2] The specified column names ({id_col} and {fingerprint_col}) are not present in the dataset DataFrame schema ({query.columns})"
+    assert (
+        (id_col, fingerprint_col) in query.columns
+    ), f"[detect_near_duplicate_new_v2] The specified column names ({id_col} and {fingerprint_col}) are not present in the query DataFrame schema ({query.columns})"
+    assert (
+        fingerprint_size in (32, 64, 128, 256, 512)
+    ), f"[detect_near_duplicate_new_v2] Fingerprint size {fingerprint_size} is invalid; it must be (32, 64, 128, 256, 512)"
+    assert (
+        K <= fingerprint_size
+    ), f"[detect_near_duplicate_new_v2] Parameter K ({K}) cannot be larger than the fingerprint size ({fingerprint_size})"
+    assert dataset_size >= 0, "[detect_near_duplicate_new_v2] Dataset size must be positive."
+
+    # Clean dataframes, taking only the needed columns
+    query = query.select([id_col, fingerprint_col])
+    dataset = dataset.select([id_col, fingerprint_col])
+
+    spark = get_spark()
+    schema = partitions_schema(
+        f=fingerprint_size,
+        K=K,
+        d=int(math.log(dataset_size, 2)),
+        p_min=int(math.log(max_match_per_probe, 2)),
+    )
+
+    if schema[0] == 1:
+        print("[detect_near_duplicate_new_v2] Fallback to Cartesian product.")
+        # TODO: make Cartesian product function
+        ...
+    query_partition_map = create_partition_map(entries=query.collect(), schema=schema)
+    return dataset
+
+
+### DETECT_NEAR_DUPLICATES_NEW ###
 
 
 def get_blocks_masks(blocks_sizes: list[int]) -> list[tuple[int, int]]:
@@ -232,13 +290,24 @@ def build_broadcast_tables(
 
 
 def detect_near_duplicate_batch(
-    corpus: DataFrame, query: DataFrame, fingerprint_size: int, K: int
+    corpus: DataFrame, query: DataFrame, fingerprint_size: int, K: int, d: int, p_min: int
 ) -> DataFrame:
     spark = get_spark()
-    # Grab the optimal number of tables ("r" param) of the first schema
-    # Since multiple tables are expensive to compute (for little benefit),
-    # just the first schema is considered.
-    num_tables = partitions_schema(f=fingerprint_size, K=K, d=20, p_min=10)[1][0]["r"]
+    corpus = corpus.select(["ID", "fingerprint"])
+    query = query.select(["ID", "fingerprint"])
+    # TODO: implement multiple tables
+    schema = partitions_schema(f=fingerprint_size, K=K, d=d, p_min=p_min)
+
+    # No partitions needed - Cartesian product is performed
+    if schema[0] == 1:
+        cartesian = corpus.alias("a").crossJoin(query.alias("b"))
+        cartesian = cartesian.withColumn(
+            "hamming_distance", hamming_distance_bin(F.col("a.fingerprint"), F.col("b.fingerprint"))
+        )
+        cartesian = cartesian.filter(F.col("hamming_distance") <= K)
+        return cartesian
+
+    num_tables = schema[1][0]["r"]
     # query_reference is a dict that allows O(1) reading when comparing fingerprints.
     query_reference, tables = build_broadcast_tables(
         query=query, fingerprint_size=fingerprint_size, K=K, num_blocks=num_tables
@@ -305,7 +374,13 @@ def detect_near_duplicate_batch(
     return spark.createDataFrame(result_rdd, schema=schema)
 
 
+### LEGACY METHODS ###
+
+
 def get_partitions_index_offset(lengths: list[int]) -> list[tuple[int, int]]:
+    raise NotImplementedError(
+        "[binary_search_method] Legacy support method used by detect_near_duplicates_alternative."
+    )
     base = 0
     result = []
     for length in lengths:
@@ -315,11 +390,17 @@ def get_partitions_index_offset(lengths: list[int]) -> list[tuple[int, int]]:
 
 
 def extract_bits(fingerprint: bytes, masks: list[int], schema: list[tuple[int, int]]) -> list[int]:
+    raise NotImplementedError(
+        "[binary_search_method] Legacy support method used by detect_near_duplicates_alternative."
+    )
     fp = int.from_bytes(fingerprint, "big")
     return [(fp & mask) >> part[0] for mask, part in zip(masks, schema)]
 
 
 def binary_search_match(record):
+    raise NotImplementedError(
+        "[binary_search_method] Legacy support method used by detect_near_duplicates_alternative."
+    )
     # The RDD must have been previously cogrouped
     # (all query and corpus rows with the same partition_ID are on the same worker)
     _, (query_iter, corpus_iter) = record
@@ -361,29 +442,51 @@ def hamming_distance(val1: bytes, val2: bytes, K: int) -> bool:
     return (int.from_bytes(val1, "big") ^ int.from_bytes(val2, "big")).bit_count() <= K
 
 
-# Assume that corpus and query have the same id_col and fingerprint_col
-def detect_near_duplicate_v2(
+# Assumes that corpus and query have the same id_col and fingerprint_col
+def detect_near_duplicate_alternative(
     corpus: DataFrame,
     query: DataFrame,
     fingerprint_size: int,
     K: int,
     id_col: str,
     fingerprint_col: str,
+    p_min: int,
+    corpus_size: int,
 ) -> DataFrame:
+    raise NotImplementedError(
+        "This is an experimental method, much less efficient compared to the already implemented method. \n"
+        "This method strives to lower the computational complexity of detect_near_duplicate_batch, while keeping the same shuffle cost. \n"
+        "It's possible by using binary search on the sorted dataset, for each query partition entry. \n"
+        "However, in PySpark it's not feasable: loading a sorted DataFrame does not guaranteed that the data each worker receives is sorted. \n"
+        "Of course, sorting the whole dataset is very expensive too. \n"
+        "If one wishes, uncomment this raised exception and move forward."
+    )
     assert id_col, fingerprint_col in corpus.columns
     assert id_col, fingerprint_col in query.columns
     assert K < fingerprint_size
-    # TODO: update terminology (iteration, schema, ...)
 
-    # corpus_log_size = int(math.log(corpus.count(), 2))
-    corpus_log_size = 20  # TODO: remove, for debug purposes
-    schema = partitions_schema(f=fingerprint_size, K=K, d=corpus_log_size, p_min=10)
-    # TODO: implement recursive algorithm
+    corpus_log_size = int(math.log(corpus_size, 2))
+    schema = partitions_schema(f=fingerprint_size, K=K, d=corpus_log_size, p_min=p_min)
     if schema[0] == 1:
-        # TODO: implement basic carthesian product
-        raise ValueError(
-            f"[detect_near_duplicate] Impossible to partition corpus using partitions with the following parameters:\ncorpus log size: {corpus_log_size}, K: {K}, fingerprint size: {fingerprint_size}"
+        print("[detect_near_duplicate] Fallback to Cartesian product.")
+        # TODO: doesn't seem to work, must be fixed and put in a separate function
+        result = (
+            corpus.alias("a")
+            .crossJoin(query.alias("b"))
+            .filter(
+                hamming_distance_bin(F.col(f"a.{fingerprint_col}"), F.col(f"b.{fingerprint_col}"))  # type: ignore
+            )
+            .withColumnsRenamed(
+                {
+                    f"b.{id_col}": "query_ID",
+                    f"b.{fingerprint_col}": "query_fingerprint",
+                    f"a.{id_col}": "corpus_ID",
+                    f"a.{fingerprint_col}": "corpus_fingerprint",
+                }
+            )
         )
+        return result
+
     partitions_lengths = get_partitions_index_offset(
         get_blocks_sizes(fingerprint_size=fingerprint_size, num_blocks=schema[1][0]["r"])
     )
@@ -438,9 +541,9 @@ def detect_near_duplicate_v2(
     )
     result_schema = StructType(
         [
-            StructField("query_ID", IntegerType(), True),
+            StructField("query_ID", StringType(), True),
             StructField("query_fingerprint", BinaryType(), True),
-            StructField("corpus_ID", IntegerType(), True),
+            StructField("corpus_ID", StringType(), True),
             StructField("corpus_fingerprint", BinaryType(), True),
         ]
     )

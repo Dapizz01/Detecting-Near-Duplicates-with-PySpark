@@ -1,0 +1,2 @@
+Selected dataset: llm-paraphrases, 262 rows.
+This sample has 133 near-duplicate rows and 129 NON near-duplicate rows.

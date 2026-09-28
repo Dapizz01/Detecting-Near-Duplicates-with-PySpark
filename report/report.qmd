@@ -149,7 +149,7 @@ In this case the embeddings model reaches the highest score, followed by TF-IDF 
 This is within expectations: despite its small size, the embedding model outperforms classic NLP feature model on semantic similarities.
 Fingerprint sizes of at least 64 bits perform about the same, while 32 bits doesn't seem to be enough to represent features in this case.
 ...
-![F1-Score for fingerprint size](media/llm_f1score_fingerprintsize.png)
+![F1-Score for fingerprint size](media/llm-paraphrases/f1score_fingerprintsize.png)
 
 ### Syntactical Duplicate Detection
 The syntactical duplicate detection benchmark is based on the wikipedia dataset [@wikipedia_dataset], modified for this task.
