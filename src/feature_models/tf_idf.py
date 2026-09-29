@@ -3,6 +3,7 @@ from pyspark.ml.feature import IDF, CountVectorizer, StopWordsRemover, Tokenizer
 from pyspark.sql import DataFrame
 from pyspark.sql.types import ArrayType, DoubleType
 
+from src.config import FINGERPRINT_SIZES
 from src.simhash import simhash_tf_idf
 from src.spark_utils import get_spark
 
@@ -10,7 +11,21 @@ from src.spark_utils import get_spark
 def make_fingerprints(
     df: DataFrame, input_col: str, output_col: str, fingerprint_size: int
 ) -> DataFrame:
-    assert input_col in df.columns
+    assert (
+        input_col in df.columns
+    ), f"[make_fingerprints (tf-idf)] The specified input column ({input_col}) is not present in the DataFrame schema ({df.columns})"
+
+    assert (
+        dict(df.dtypes).get(input_col) == "string"
+    ), f"[make_fingerprints (tf-idf)] The type of the input column ({input_col}) is ({dict(df.dtypes).get(input_col)}) instead of (string)"
+
+    assert (
+        output_col not in df.columns
+    ), f"[make_fingerprints (tf-idf)] The specified output column ({output_col}) is already present in the DataFrame schema ({df.columns})"
+
+    assert (
+        fingerprint_size in FINGERPRINT_SIZES
+    ), f"[make_fingerprints (tf-idf)] The specified fingerprint size ({fingerprint_size}) is invalid; its possible values are ({FINGERPRINT_SIZES})"
 
     # Tokenize word by space
     tokenizer = Tokenizer(inputCol=input_col, outputCol="words")
@@ -41,8 +56,10 @@ def make_fingerprints(
             {word: i for i, word in enumerate(vocabulary)}
         )
     except Exception as e:
-        print(f"Error during vocabulary broadcast for TF-IDF: {e}")
-        print("Most likely, the vocabulary is too large to be broadcasted.")
+        print(
+            f"[make_fingerprints (tf-idf)] Error during vocabulary broadcast for TF-IDF: {e}\n"
+            "Most likely, the vocabulary is too large to be broadcasted."
+        )
 
     @F.udf(returnType=ArrayType(DoubleType()))
     def extract_weights(tokens, tfidf_vector):
@@ -73,6 +90,12 @@ def make_fingerprints(
 def make_fingerprints_legacy(
     df: DataFrame, input_col: str, output_col: str, fingerprint_size: int
 ) -> DataFrame:
+    raise NotImplementedError(
+        "This method is obsolete.\n"
+        "It's a custom implementation of TF-IDF using PySpark SQL functions.\n"
+        "It works, but it's times slower than make_fingerprints(...).\n"
+        "Thus, it's recommended to just use make_fingerprints(...)."
+    )
     assert input_col in df.columns
 
     # Tokenize words by space

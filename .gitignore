@@ -5,7 +5,7 @@
 data/*
 !data/.gitkeep
 
-results
+results/
 
 spark-warehouse/
 metastore_db/

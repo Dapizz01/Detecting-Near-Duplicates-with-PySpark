@@ -153,7 +153,7 @@ def simhash_shingles_over_chars(
         else:
             shingles = [text[i : i + window_size] for i in range(len(text) - window_size + 1)]
         if shingles == []:
-            raise Exception("Test exception!")
+            raise Exception("[simhash_shingles_over_chars] Error during shingles extraction.")
         hashes = [
             blake2b(shingle.encode(), digest_size=int(fingerprint_size / 8)).digest()
             for shingle in shingles

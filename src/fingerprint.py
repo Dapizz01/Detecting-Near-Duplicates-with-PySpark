@@ -2,9 +2,8 @@ from dataclasses import dataclass
 
 from pyspark.sql import DataFrame
 
+from src.config import FEATURE_MODELS, FINGERPRINT_SIZES
 from src.feature_models import bag_of_words, embeddings, shingles, tf_idf
-
-FINGERPRINT_SIZES = (32, 64, 128, 256, 512)
 
 
 @dataclass
@@ -26,7 +25,7 @@ def create_fingerprints(
     Args:
         df (DataFrame): input dataframe
         model (str): specifies the feature model - it must be one of "bag_of_words", "embeddings", "shingles", "tf-idf"
-        input_col (str): input column name
+        input_col (str): input column name. Data is already expected to be cleaned.
         output_col (str): output column name
         fingerprint_size (int): size (in bits) of the fingerprints
         other (FingerprintParams): additional params for the "shingles" feature model
@@ -34,12 +33,9 @@ def create_fingerprints(
     Returns:
         DataFrame: output dataframe
     """
-    assert model in [
-        "bag_of_words",
-        "embeddings",
-        "shingles",
-        "tf-idf",
-    ], f"[create_fingerprints] The selected model ({model}) is not available."
+    assert (
+        model in FEATURE_MODELS
+    ), f"[create_fingerprints] The selected model ({model}) is invalid; it must be one of ({FEATURE_MODELS})."
     assert (
         input_col in df.columns
     ), f"[create_fingerprints] The input column ({input_col}) does not exist in the DataFrame."
@@ -96,5 +92,4 @@ def create_fingerprints(
         output_col in df.columns
     ), "[create_fingerprints] Runtime error: the feature model failed to generate the required fingerprints."
 
-    # df = df.drop(clean_col)
     return df

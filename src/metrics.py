@@ -23,8 +23,13 @@ class ModelMetrics:
 
 
 def extract_metrics(df: DataFrame, test_col: str, truth_col: str) -> Metrics:
-    assert test_col in df.columns
-    assert truth_col in df.columns
+    assert (
+        test_col in df.columns
+    ), f"[extract_metrics] The test column ({test_col}) isn't present in the DataFrame schema ({df.columns})."
+    assert (
+        truth_col in df.columns
+    ), f"[extract_metrics] The truth column ({truth_col}) isn't present in the DataFrame schema ({df.columns})"
+
     bow_metrics = df.agg(
         F.sum(
             F.when(

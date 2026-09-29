@@ -286,7 +286,7 @@ Higher $K$ values forces the algorithm to adopt small partitions, which generate
 ![](media/detection_scaling.png)
 
 
-## Semantic near-duplicates: qqp dataset analysis {.scrollable}
+## Semantic near-duplicates: qqp dataset analysis {.scrollable .smaller}
 
 Sample of 199 rows with 76 near-duplicate rows.
 
@@ -341,7 +341,7 @@ The $K$ sweet spot is around 5 to 6.
 
 ![](media/qqp/precision_recall.png)
 
-## Syntax near-duplicates: wikipedia dataset analysis {.scrollable}
+## Syntax near-duplicates: wikipedia dataset analysis {.scrollable .smaller}
 
 Dataset composed of 1000 wikipedia entries pairs.
 Half of them are the same entry but with some random noise (altered words), from 5% to 10%.
@@ -371,7 +371,7 @@ All features models are strong enough to ignore syntactical noise.
 
 ![](media/wikipedia/f1score_confusionmatrix.png)
 
-## Real use-case: c5 dataset {.scrollable}
+## Real use-case: c5 dataset {.scrollable .smaller}
 
 A fork of the popular c4 dataset, contains Italian web pages content.
 This dataset isn't deduplicated.

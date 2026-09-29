@@ -22,6 +22,9 @@ SPARK_MASTER = os.getenv("SPARK_MASTER", "local[*]")
 SPARK_DRIVER_MEMORY = os.getenv("SPARK_DRIVER_MEMORY", "4g")
 SPARK_SHUFFLE_PARTITIONS = os.getenv("SPARK_SHUFFLE_PARTITIONS", "8")
 
+FINGERPRINT_SIZES = (32, 64, 128, 256, 512)
+FEATURE_MODELS = ("bag_of_words", "shingles", "tf-idf", "embeddings")
+
 
 def data_path(*parts: str) -> Path:
     """
