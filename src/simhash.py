@@ -20,42 +20,61 @@ def _numba_fastsimhash(byte_matrix: np.ndarray, n_hashes: int, hash_len: int) ->
         hash_len (int): length of an hash, in **bytes**
 
     Returns:
-        np.ndarray: a fingerprint
+        np.ndarray: a list of integers, each representing a byte of the result fingerprint
     """
-    # One 32-bit counter for every bit (8 for each byte)
-    counters = np.zeros(hash_len * 8, dtype=np.int32)
 
-    if n_hashes == 0:
-        raise ValueError("[_numba_fastsimhash] n_hashes has value zero. Is byte_matrix empty?")
-    if hash_len == 0:
-        raise ValueError("[_numba_fastsimhash] hash_len has value zero. Is byte_matrix empty?")
+    # List of 64 bit counters (one for each bit)
+    counters = np.zeros(hash_len * 8, dtype=np.int64)
 
-    # Iterate over each hash and each byte index
-    for i in range(n_hashes):
-        for j in range(hash_len):
-            # Get j-th byte
-            val = byte_matrix[i, j]
-            # Skips previous counters
-            base_idx = j * 8
+    if n_hashes == 0 or hash_len == 0:
+        raise ValueError("[_numba_fastsimhash] n_hashes or hash_len has value zero.")
 
-            # Updates each counter of the bits inside the byte,
-            # shifting from left to right and masking with 1
-            counters[base_idx] += (val >> 7) & 1  # Most significant (left)
-            counters[base_idx + 1] += (val >> 6) & 1
-            counters[base_idx + 2] += (val >> 5) & 1
-            counters[base_idx + 3] += (val >> 4) & 1
-            counters[base_idx + 4] += (val >> 3) & 1
-            counters[base_idx + 5] += (val >> 2) & 1
-            counters[base_idx + 6] += (val >> 1) & 1
-            counters[base_idx + 7] += val & 1  # Least significant (right)
+    # Iterate over all bit columns
+    for j in range(hash_len):
+        # Local counters (one for each bit of a byte), loaded on CPU registers.
+        # They are 64 bit integers.
+        c7 = 0
+        c6 = 0
+        c5 = 0
+        c4 = 0
+        c3 = 0
+        c2 = 0
+        c1 = 0
+        c0 = 0
+
+        # On SimHash, the "counters" variable would be updated.
+        # However, it would require to find, load and update on memory the counter.
+        # Instead, local counters are kept in registers and "counters" is only updated once.
+        for i in range(n_hashes):
+            val = byte_matrix[i, j]  # val is a byte
+            c7 += (val >> 7) & 1
+            c6 += (val >> 6) & 1
+            c5 += (val >> 5) & 1
+            c4 += (val >> 4) & 1
+            c3 += (val >> 3) & 1
+            c2 += (val >> 2) & 1
+            c1 += (val >> 1) & 1
+            c0 += val & 1
+
+        # Update "counters" with the values of the local counters
+        base_idx = j * 8
+        counters[base_idx] = c7
+        counters[base_idx + 1] = c6
+        counters[base_idx + 2] = c5
+        counters[base_idx + 3] = c4
+        counters[base_idx + 4] = c3
+        counters[base_idx + 5] = c2
+        counters[base_idx + 6] = c1
+        counters[base_idx + 7] = c0
 
     output = np.zeros(hash_len, dtype=np.uint8)
-    threshold = (n_hashes + 1) // 2
+    threshold = (n_hashes + 1) // 2  # At least half + 1 needed for bit majority
+
+    # Now "counters" contains the number of "1"s for each bit index.
+    # Each byte is mapped into an 8-bit integer.
     for i in range(hash_len):
         base_idx = i * 8
-        part_sum = 0  # Integer value of a byte
-        # For each bit, if the counter value is bigger than the threshold
-        # the bit will be set to 1 in the result fingerprint.
+        part_sum = 0
         if counters[base_idx] >= threshold:  # Most significant
             part_sum |= 128
         if counters[base_idx + 1] >= threshold:
@@ -72,7 +91,8 @@ def _numba_fastsimhash(byte_matrix: np.ndarray, n_hashes: int, hash_len: int) ->
             part_sum |= 2
         if counters[base_idx + 7] >= threshold:  # Least significant
             part_sum |= 1
-        output[i] = part_sum  # The sum is saved as an integer
+        output[i] = part_sum
+
     return output
 
 
@@ -90,12 +110,15 @@ def fastsimhash(hashes: list[bytes]) -> bytes:
     """
     if hashes is None or len(hashes) == 0:
         raise ValueError("[fastsimhash] An empty byte_list has been passed.")
+
     n = len(hashes)
     hash_len = len(hashes[0])  # Returns num of bytes in an hash
+
     # Aggregates hashes into a matrix.
-    # byte_matrix[i][j] = j-th bit of hash i
+    # byte_matrix[i][j] = j-th byte of hash i
     byte_matrix = np.frombuffer(b"".join(hashes), dtype=np.uint8).reshape(n, hash_len)
     fingerprint_list = _numba_fastsimhash(byte_matrix, n, hash_len)
+
     # Merges list of integers (parts of fingerprint) into a single bytes Python value (the fingerprint)
     return fingerprint_list.tobytes()
 
@@ -148,16 +171,20 @@ def simhash_shingles_over_chars(
     def compute(text: str, window_size: int, fingerprint_size: int) -> bytes:
         if text is None or text.strip() == "":
             raise ValueError(f"[simhash_shingles_over_chars] The input text ({text}) is empty.")
+
         if window_size <= len(text):
             shingles = [text]
         else:
             shingles = [text[i : i + window_size] for i in range(len(text) - window_size + 1)]
+
         if shingles == []:
             raise Exception("[simhash_shingles_over_chars] Error during shingles extraction.")
+
         hashes = [
             blake2b(shingle.encode(), digest_size=int(fingerprint_size / 8)).digest()
             for shingle in shingles
         ]
+
         return fastsimhash(hashes=hashes)
 
     return pd.Series([compute(t, ws, fs) for t, ws, fs in zip(text, window_size, fingerprint_size)])
@@ -170,17 +197,21 @@ def simhash_shingles_over_words(
     def compute(text: str, window_size: int, fingerprint_size: int) -> bytes:
         if text is None or not text.strip():
             raise ValueError(f"[simhash_shingles_over_words] The input text ({text}) is empty.")
+
         words = text.split()
+
         if len(words) <= window_size:
             shingles = words
         else:
             shingles = [
                 "".join(words[i : i + window_size]) for i in range(len(words) - window_size + 1)
             ]
+
         hashes = [
             blake2b(shingle.encode(), digest_size=int(fingerprint_size / 8)).digest()
             for shingle in shingles
         ]
+
         return fastsimhash(hashes=hashes)
 
     return pd.Series([compute(t, ws, fs) for t, ws, fs in zip(text, window_size, fingerprint_size)])
@@ -191,11 +222,13 @@ def simhash_bow(text: pd.Series, fingerprint_size: pd.Series) -> pd.Series:
     def compute(text: str, fingerprint_size: int) -> bytes:
         if text is None or not text.strip():
             raise ValueError(f"[simhash_bow] The input text ({text}) is empty.")
+
         tokens = [x for x in text.split() if x]
         hashes = [
             blake2b(token.encode(), digest_size=int(fingerprint_size / 8)).digest()
             for token in tokens
         ]
+
         return fastsimhash(hashes=hashes)
 
     return pd.Series([compute(t, fs) for t, fs in zip(text, fingerprint_size)])

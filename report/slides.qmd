@@ -1,5 +1,6 @@
 ---
 title: "Reproducing \"Near-Duplicate Detection for Web Crawling\""
+author: "Big Data course project"
 format: 
   revealjs:
     mermaid-format: svg
@@ -11,55 +12,27 @@ format:
 
 ## Original paper (cont.)
 
-The paper aims to:
+The reference paper aims to:
 
-- Show that Charikar's SimHash algorithm is effective to generate similar hashes for similar content
-- Present an efficient algorithm that allows to detect near-duplicates pairs up to a (reasonably small) factor $K$
+- Show that Charikar's SimHash algorithm is effective to generate similar hashes for similar data
+- Present an efficient algorithm that allows to detect near-duplicates pairs, up to a (reasonably small) Hamming distance $K$
 
 In this work only the "batch" version of the proposed algorithm is implemented, using PySpark.
 
-## Types of near-duplicates {.smaller}
+## Near-duplicates
 
-Near-duplicates generally fall into two non-exclusive categories:
-
-:::: {.columns}
-
-::: {.column width="50%"}
-**Semantic**
-
-*Similar meaning:*
-
-> "a senior couple strolls along the beach while holding hands during sunset"  
-> $\approx$  
-> "an older couple walks hand in hand on the beach at sunset"
+::: {.callout-note}
+## Definition: Near-duplicate
+Two strings are considered *near-duplicates* if they are *similar enough*.
 :::
 
-::: {.column width="50%"}
-**Syntactic**
+Unfortunately, it's hard to pin-point the criteria and the degree that make two strings similar.
+They might be similar semantically (eg. same argument, or same topic) or syntactically (eg. their words are about the same).
 
-*Similar structure:*
+## Near-duplicates Detection
 
-> "The quiet librarian suddenly discovered a valuable manuscript inside the forgotten wooden cabinet"  
-> $\approx$  
-> "The quiet mechanic suddenly discovered a dangerous leak inside the forgotten engine cabinet"
-:::
-
-::::
-
-## Potential near-duplicate detection applications {.smaller}
-
-- Remove near-duplicate pages to improve web crawling processes efficiency
-- Sanitize datasets from near-duplicate entries
-- Spam detection and plagiarism
-- Detect malwares from a known dataset of potentially malicious softwares
-- Build advanced file systems, able to bundle together files with similar content
-- ... and much more!
-
-## Duplicate vs. Near-duplicates
-
-Duplicates are commonly detected using hash functions.
-
-However, hash functions may return vastly different digests for very similar data.
+It's easy to check if two strings are duplicate: using hash functions, this just takes $O(1)$ time.
+However hash functions aren't strong enough to detect near-duplicates: **ever-so-slightly different strings may have wildly different digests**.
 
 ```{mermaid}
 %%| fig-width: 8
@@ -77,39 +50,82 @@ flowchart LR
     text2 -->|hash| hash2
 ```
 
-## Fingerprint generation
+# SimHash
 
-A fingerprint is a string of bits of some fixed length that identifies some data.
-Fingerprints are generated combining features extracted from data (SimHash algorithm).
+## SimHash
 
-```{mermaid}
-%%| fig-width: 8
-%%| fig-height: 4
-flowchart LR
-    data["Data"]
-    feature1["Feature"]
-    feature2["Feature"]
-    feature3["Feature"]
-    fingerprint["Fingerprint"]
-    data --> feature1 & feature2 & feature3
-    feature1 --> fingerprint
-    feature2 --> fingerprint
-    feature3 --> fingerprint
-```
+::: {.callout-note}
+## Definition: SimHash
+**SimHash** is a technique for quickly estimating how similar two sets are. ^[https://en.wikipedia.org/wiki/SimHash]
+:::
 
-## Feature extraction models
+In this case, a set of *features* are extracted from each string of the dataset and used as input for the SimHash algorithm.
 
-For text data, four different feature models are tested in this work:
+## Features
+
+::: {.callout-note}
+## Definition: Feature
+A **feature** is a property of some data (i.e. a string).
+:::
+
+::: {.callout-note}
+## Definition: Feature Model
+A **feature model** describes what type of features properly describes some data (i.e. a string).
+:::
+
+## Features: an example
+
+Consider the quote *"Don't worry about people stealing your ideas. If your ideas are any good, you'll have to ram them down people's throats."*. ^[https://docs.superhuman.com/mark-davis/random-quote]
+
+A possible __feature model__ might be the set of words that appear at least two times.
+
+In this case, the __features__ of the quote are (people, your, ideas).
+
+## SimHash: a deeper look {.smaller}
+
+For each string, its features are hashed and their digests are combined, taking the most popular bit value for every bit index.
+
+The result is a string of bits that "describes" the input string, called **fingerprint**.
+
+![](media/simhash_animation.gif)
+
+## FastSimHash {.smaller}
+
+SimHash can be naively implemented using an array of counters and iterating over all digests.
+
+It's possible to optimize it by using Numba, a Just-In-Time compiler for Python that translates Python and NumPy code into machine code, using SIMD instructions wherever possible.
+Instead of iterating over all digests, it iterates over bit indexes and uses local counters (kept in CPU registers) to reduce memory updates.
+
+Benchmark performed on 1000000 64 bit digests:
+
+Round 1:
+SimHash time: 14104 ms,
+FastSimHash time: 431 ms (slower due to initial compilation)
+
+Round 2:
+SimHash time: 14247 ms,
+FastSimHash time: 10 ms
+
+## Feature models
+
+The source paper proposed several possible feature models for this task.
+Three of them have been implemented in this work, plus an original fourth one.
 
 1. Bag of words
 2. Shingles
 3. TF-IDF
 4. Embeddings
 
-## Feature Model: Bag of words
+::: {.callout-tip}
+## Which feature model did the source paper adopt?
+The authors of the paper picked TF-IDF.
+:::
+
+## Feature model: Bag of Words
 
 Each word in a text is considered a feature.
-Easy to compute, but cannot detect locality.
+Easy to compute, but cannot detect locality: two strings containing the same words are always considered duplicate.
+
 ```{mermaid}
 %%| fig-width: 8
 %%| fig-height: 4
@@ -123,9 +139,9 @@ flowchart LR
         word3["three"]
     end
     subgraph Features
-        hash1["12f5aedc..."]
-        hash2["383ef369..."]
-        hash3["8b5b9db0..."]
+        hash1["10110101..."]
+        hash2["01010101..."]
+        hash3["11010100..."]
     end
     text1 --> word1 & word2 & word3
     word1 --> hash1
@@ -133,7 +149,7 @@ flowchart LR
     word3 --> hash3
 ```
 
-## Feature Model: Shingles
+## Feature model: Shingles
 
 A feature is a contiguous series of elements in a text.
 Elements can be words or characters, and can be overlapping.
@@ -152,9 +168,9 @@ flowchart LR
         word3["eam"]
     end
     subgraph Features
-        hash1["9accfb6f..."]
-        hash2["c4599aab..."]
-        hash3["8fcf84a3..."]
+        hash1["11000001..."]
+        hash2["00101011..."]
+        hash3["01110000..."]
     end
     text1 --> word1 & word2 & word3
     word1 --> hash1
@@ -162,13 +178,13 @@ flowchart LR
     word3 --> hash3
 ```
 
-## Feature Model: TF-IDF {.smaller}
+## Feature model: TF-IDF {.smaller}
 
 A more sophisticated variant of "Bag of words".
 TF-IDF stands for Term Frequency - Inverse Document Frequency.
 Each word is weighted for their rarity, inside its text and in the whole dataset.
 Rare words have higher weights, while common words have lower weights.
-It requires to re-compute all fingerprints when the dataset changes, making it taxing to compute and maintain.
+It requires to re-compute all fingerprints when the dataset changes, making it heavy to compute and maintain.
 
 ```{mermaid}
 %%| fig-width: 8
@@ -183,9 +199,9 @@ flowchart LR
         word3["fork"]
     end
     subgraph Features ["Features and weights"]
-        hash1["1d315be9..., 0.2"]
-        hash2["87428fc5..., 0.05"]
-        hash3["24ecccc1..., 0.8"]
+        hash1["10101111..., 0.2"]
+        hash2["01110101..., 0.05"]
+        hash3["11010111..., 0.8"]
     end
     text1 --> word1 & word2 & word3
     word1 --> hash1
@@ -193,52 +209,29 @@ flowchart LR
     word3 --> hash3
 ```
 
-## Feature Model: Embeddings
+## Feature model: Embeddings
 
-Each text is converted into a set of weights, using the embedding model Qwen3-embedding:0.6b.
-The fingerprint is obtained by quantizing each float weight to 0/1, using the median as pivot.
-Can require large amount of memory for long inputs.
+Each string is converted into a set of floating point weights, using the embedding model Qwen3-embedding:0.6b.
+The fingerprint is obtained by quantizing each weight to 0/1, using the median as pivot.
+Requires rather large amount of memory for long inputs.
+
+There's no need to use SimHash here: the model provides only one feature for each string.
 
 ## Feature models performance {.smaller}
 
 Performed on the *llm-paraphrases* dataset.
 
-TF-IDF is the slowest model: it requires to create a frequency map of all words in the dataset.
-Embeddings performance might get worse on datasets with longer texts.
+TF-IDF is the slowest model by far: it requires to create a frequency map of all words in the dataset.
 
 ![](media/feature_models_performance.png)
 
-## SimHash
+# Near-duplicate batch detection algorithm
 
-All features of some data are combined by taking the most popular value for each bit index.
-This can be sped up using FastSimHash.
+## Near-duplicate batch detection algorithm in PySpark {.smaller}
 
-```{mermaid}
-%%| fig-width: 8
-%%| fig-height: 4
-flowchart LR
-    subgraph Features
-        hash1["10010100..."]
-        hash2["11010111..."]
-        hash3["10101011..."]
-    end
-    subgraph Fingerprint
-        result["10010111..."]
-    end
-    hash1 --> result
-    hash2 --> result
-    hash3 --> result
-```
+Suppose to have two fingerprint DataFrames, *query* and *dataset* (*query* is assumed to be the smaller DataFrame).
 
-
-## FastSimHash
-...
-
-## Near-duplicate detection algorithm in PySpark (batch version) {.smaller}
-
-Suppose to have two fingerprint DataFrames, *query* and *dataset* (*query* is always the smaller DataFrame).
-
-1. *query* fingerprints are split into at least $K$ partitions (pigeonhole principle)
+1. *query* fingerprints are split into at least $K$ partitions (Pigeonhole Principle)
 2. *query* partitions are collected in a hash table and distributed to all workers, alongside *query* itself
 3. Workers iterate over *dataset*, splitting each row into partitions and checking if it matches at least one of the *query* partitions
 4. Fingerprint pairs with matching partitions *might* be near-duplicate: if their Hamming distance is less than $K$ they are considered a near-duplicate pair
@@ -248,21 +241,19 @@ This algorithm prioritizes locality: only *query* fingerprints and partitions ar
 ## Near-duplicate detection algorithm in PySpark (batch version): schema
 <!-- TODO: remake this -->
 ```{mermaid}
-%%| fig-width: 8
-%%| fig-height: 8
-flowchart TD
+flowchart LR
     subgraph Driver1 ["Driver"]
-        query_part_gen["Query partitions generation"]
+        query_part_gen["Query partitions"]
     end
     subgraph Worker1
-        dataset_part_gen1["Dataset partitions generation"]
-        part_matching1["Retrieve pairs with matching partitions"]
-        candidate_filter1["Filter out pairs with Hamming distance >= K"]
+        dataset_part_gen1["Dataset partitions"]
+        part_matching1["Extract candidate pairs"]
+        candidate_filter1["Check Hamming distance"]
     end
     subgraph Worker2
-        dataset_part_gen2["Dataset partitions generation"]
-        part_matching2["Retrieve pairs with matching partitions"]
-        candidate_filter2["Filter out pairs with Hamming distance >= K"]
+        dataset_part_gen2["Dataset partitions"]
+        part_matching2["Extract candidate pairs"]
+        candidate_filter2["Check Hamming distance"]
     end
     subgraph Driver2 ["Driver"]
         result["All near-duplicate pairs"]
@@ -281,14 +272,16 @@ flowchart TD
 ## ... but why does this work only for small $K$ values? {.smaller}
 
 The graph below shows the expected number of candidates for each query row at different $K$ values.
-Higher $K$ values forces the algorithm to adopt small partitions, which generate a large amount of candidates.
+Higher $K$ values forces the algorithm to adopt small partitions, which generates a large amount of candidates.
 
 ![](media/detection_scaling.png)
 
+# Benchmarks
 
 ## Semantic near-duplicates: qqp dataset analysis {.scrollable .smaller}
 
-Sample of 199 rows with 76 near-duplicate rows.
+Industry standard as a semantic near-duplicate detection benchmark.
+Small sample of 199 rows with 76 near-duplicate rows.
 
 ```{python}
 #| output: asis
@@ -337,7 +330,7 @@ Computed on 64 bits fingerprints.
 
 ## qqp: precision - recall
 
-The $K$ sweet spot is around 5 to 6.
+The optimal $K$ value is around 5 to 6.
 
 ![](media/qqp/precision_recall.png)
 
@@ -346,7 +339,7 @@ The $K$ sweet spot is around 5 to 6.
 Dataset composed of 1000 wikipedia entries pairs.
 Half of them are the same entry but with some random noise (altered words), from 5% to 10%.
 The other are pairs of completely different entries.
-Due to the large size of each entry, the Embeddings feature model is not considered for this analysis.
+The *Embeddings* feature model couldn't be tested: it requires more than 8GB of RAM (16GB or more should be enough though).
 
 ```{python}
 #| output: asis
@@ -373,8 +366,8 @@ All features models are strong enough to ignore syntactical noise.
 
 ## Real use-case: c5 dataset {.scrollable .smaller}
 
-A fork of the popular c4 dataset, contains Italian web pages content.
-This dataset isn't deduplicated.
+A sampled fork of the popular c4 dataset, containing Italian web pages content.
+This dataset isn't cleaned, so duplicates and near-duplicates can be found.
 
 ```{python}
 #| output: asis
@@ -394,7 +387,13 @@ print(df.to_markdown())
 ```
 
 ## c5: results
-...
+
+From a sample of 50000 rows (170 MB), with $K = 3$, the detected near-duplicate pairs are:
+
+- *bag_of_words*: 32111 pairs, in 8679 ms
+- *shingles*: 22220 pairs, in 9858 ms (shingle_size of 3, over words)
+- *tf-idf*: 34626 pairs, in 79484 ms
+- *embeddings*: OOM
 
 ## Improvements over the original paper
 
@@ -403,5 +402,22 @@ print(df.to_markdown())
 - Four different feature models available
 - Semantic near-duplicate detection
 - FastSimHash
+
+## Potential near-duplicate detection applications {.smaller}
+
+- Remove near-duplicate pages to improve web crawling processes efficiency
+- Sanitize datasets from near-duplicate entries
+- Spam detection and plagiarism
+- Detect malwares from a known dataset of malicious softwares
+- Build advanced file systems, able to bundle together files with similar content
+- ... and much more: this algorithm is not restricted to just textual data.
+
+## Some observations {.smaller}
+
+- Benchmarks show that fingerprint sizes are relevant only to avoid collisions on large datasets.
+- The optimal $K$ value seems to be low enough to justify the proposed algorithm for all analyzed datasets.
+- The *Embeddings* model is the best feature model overall (despite the aggressive binary quantization), considering that better-performing open-source models are available.
+- PySpark's optimizer may cause issues: it's good practice to check the Physical Plan of a transformation pipeline before executing it.
+- Locality trumps computational complexity: the *detect_near_duplicate_batch* method has two implementations, that strive to minimize one of the two. The one that minimizes locality is generally much faster.
 
 # Thanks!
