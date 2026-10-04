@@ -134,21 +134,22 @@ def detect_near_duplicate_batch_v2(
     K: int,
     max_match_per_probe: int,
 ) -> DataFrame:
-    assert (
-        id_col != fingerprint_col
-    ), f"[detect_near_duplicate_new_v2] Fingerprint column and ID column names are the same ({id_col})"
-    assert (
-        (id_col, fingerprint_col) in dataset.columns
-    ), f"[detect_near_duplicate_new_v2] The specified column names ({id_col} and {fingerprint_col}) are not present in the dataset DataFrame schema ({query.columns})"
-    assert (
-        (id_col, fingerprint_col) in query.columns
-    ), f"[detect_near_duplicate_new_v2] The specified column names ({id_col} and {fingerprint_col}) are not present in the query DataFrame schema ({query.columns})"
-    assert (
-        fingerprint_size in (32, 64, 128, 256, 512)
-    ), f"[detect_near_duplicate_new_v2] Fingerprint size {fingerprint_size} is invalid; it must be (32, 64, 128, 256, 512)"
-    assert (
-        K <= fingerprint_size
-    ), f"[detect_near_duplicate_new_v2] Parameter K ({K}) cannot be larger than the fingerprint size ({fingerprint_size})"
+    raise NotImplementedError("This function is still under development!")
+    assert id_col != fingerprint_col, (
+        f"[detect_near_duplicate_new_v2] Fingerprint column and ID column names are the same ({id_col})"
+    )
+    assert (id_col, fingerprint_col) in dataset.columns, (
+        f"[detect_near_duplicate_new_v2] The specified column names ({id_col} and {fingerprint_col}) are not present in the dataset DataFrame schema ({query.columns})"
+    )
+    assert (id_col, fingerprint_col) in query.columns, (
+        f"[detect_near_duplicate_new_v2] The specified column names ({id_col} and {fingerprint_col}) are not present in the query DataFrame schema ({query.columns})"
+    )
+    assert fingerprint_size in (32, 64, 128, 256, 512), (
+        f"[detect_near_duplicate_new_v2] Fingerprint size {fingerprint_size} is invalid; it must be (32, 64, 128, 256, 512)"
+    )
+    assert K <= fingerprint_size, (
+        f"[detect_near_duplicate_new_v2] Parameter K ({K}) cannot be larger than the fingerprint size ({fingerprint_size})"
+    )
     assert dataset_size >= 0, "[detect_near_duplicate_new_v2] Dataset size must be positive."
 
     # Clean dataframes, taking only the needed columns
@@ -251,9 +252,9 @@ def get_blocks_sizes(fingerprint_size: int, num_blocks: int) -> list[int]:
 def build_broadcast_tables(
     query: DataFrame, fingerprint_size: int, K: int, num_blocks: int
 ) -> tuple[dict, list[dict]]:
-    assert (
-        len(query.columns) == 2
-    ), "The query dataframe must have schema: (ID: int, fingerprint: binary)"
+    assert len(query.columns) == 2, (
+        "The query dataframe must have schema: (ID: int, fingerprint: binary)"
+    )
     # Move the query DataFrame in the driver memory
     query_rows = query.collect()
     # Obtains sizes of each block (ex: [11, 11, 11, 11, 10, 10])

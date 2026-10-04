@@ -4,6 +4,8 @@ author: "Big Data course project"
 format: 
   revealjs:
     mermaid-format: svg
+    resources:
+      - "media/"
 ---
 
 ### Original paper
@@ -14,8 +16,8 @@ format:
 
 The reference paper aims to:
 
-- Show that Charikar's SimHash algorithm is effective to generate similar hashes for similar data
-- Present an efficient algorithm that allows to detect near-duplicates pairs, up to a (reasonably small) Hamming distance $K$
+- Show that Charikar's SimHash algorithm is effective to generate similar hashes for similar data;
+- Present an efficient algorithm that allows to detect near-duplicates pairs, up to a (reasonably small) Hamming distance K.
 
 In this work only the "batch" version of the proposed algorithm is implemented, using PySpark.
 
@@ -31,7 +33,7 @@ They might be similar semantically (eg. same argument, or same topic) or syntact
 
 ## Near-duplicates Detection
 
-It's easy to check if two strings are duplicate: using hash functions, this just takes $O(1)$ time.
+It's easy to check if two strings are duplicate: using hash functions, this just takes O(1) time.
 However hash functions aren't strong enough to detect near-duplicates: **ever-so-slightly different strings may have wildly different digests**.
 
 ```{mermaid}
@@ -231,52 +233,39 @@ TF-IDF is the slowest model by far: it requires to create a frequency map of all
 
 Suppose to have two fingerprint DataFrames, *query* and *dataset* (*query* is assumed to be the smaller DataFrame).
 
-1. *query* fingerprints are split into at least $K$ partitions (Pigeonhole Principle)
+1. *query* fingerprints are split into at least K+1 partitions (Pigeonhole Principle)
 2. *query* partitions are collected in a hash table and distributed to all workers, alongside *query* itself
 3. Workers iterate over *dataset*, splitting each row into partitions and checking if it matches at least one of the *query* partitions
-4. Fingerprint pairs with matching partitions *might* be near-duplicate: if their Hamming distance is less than $K$ they are considered a near-duplicate pair
+4. Fingerprint pairs with matching partitions *might* be near-duplicate: if their Hamming distance is less than K they are considered a near-duplicate pair
 
 This algorithm prioritizes locality: only *query* fingerprints and partitions are once sent from the driver to the workers.
 
-## Near-duplicate detection algorithm in PySpark (batch version): schema
-<!-- TODO: remake this -->
-```{mermaid}
-flowchart LR
-    subgraph Driver1 ["Driver"]
-        query_part_gen["Query partitions"]
-    end
-    subgraph Worker1
-        dataset_part_gen1["Dataset partitions"]
-        part_matching1["Extract candidate pairs"]
-        candidate_filter1["Check Hamming distance"]
-    end
-    subgraph Worker2
-        dataset_part_gen2["Dataset partitions"]
-        part_matching2["Extract candidate pairs"]
-        candidate_filter2["Check Hamming distance"]
-    end
-    subgraph Driver2 ["Driver"]
-        result["All near-duplicate pairs"]
-    end
-    Query --> Driver1
-    query_part_gen --> dataset_part_gen1
-    query_part_gen --> dataset_part_gen2
-    dataset_part_gen1 --> part_matching1
-    part_matching1 --> candidate_filter1
-    dataset_part_gen2 --> part_matching2
-    part_matching2 --> candidate_filter2
-    Worker1 --> Driver2
-    Worker2 --> Driver2
-```
+## Near-duplicate batch detection algorithm in PySpark: animation
 
-## ... but why does this work only for small $K$ values? {.smaller}
+{{< video media/fixed_video.mp4 height="500" autoplay="true" muted="true" loop="true" >}}
 
-The graph below shows the expected number of candidates for each query row at different $K$ values.
-Higher $K$ values forces the algorithm to adopt small partitions, which generates a large amount of candidates.
+## Near-duplicate batch detection algorithm in PySpark: performance
+
+It takes 7.623 seconds to run the algorithm on a dataset of around 800,000 elements and a batch of 200,000 elements, with fingerprints of 64 bits, K=3 and 8 workers.
+
+::: {.callout-tip}
+## How does it fare against the original paper claims?
+Unfortunately, it's very hard to compare them.
+The algorithm described in the paper has been crafted to work exclusively with fingerprints of 64 bits and a K value of 3, 
+while the algorithm implemented here works for every fingerprint size and K value.
+Also, the measurements showed by the authors was performed on Google's data centers, which are much more powerful than a laptop.
+
+The authors specified that it took less than 100 seconds to run their implementation on a dataset of 8B elements and a batch of 1,000,000 elements, using 200 workers.
+:::
+
+## Extra: why does K need to be small? {.smaller}
+
+The graph below shows the expected number of candidates for each query row at different K values.
+Higher K values forces the algorithm to adopt small partitions, which generates a large amount of candidates.
 
 ![](media/detection_scaling.png)
 
-# Benchmarks
+# Dataset analysis
 
 ## Semantic near-duplicates: qqp dataset analysis {.scrollable .smaller}
 
@@ -330,7 +319,7 @@ Computed on 64 bits fingerprints.
 
 ## qqp: precision - recall
 
-The optimal $K$ value is around 5 to 6.
+The optimal K value is around 5 to 6.
 
 ![](media/qqp/precision_recall.png)
 
@@ -388,7 +377,7 @@ print(df.to_markdown())
 
 ## c5: results
 
-From a sample of 50000 rows (170 MB), with $K = 3$, the detected near-duplicate pairs are:
+From a sample of 50000 rows (170 MB), with K=3, the detected near-duplicate pairs are:
 
 - *bag_of_words*: 32111 pairs, in 8679 ms
 - *shingles*: 22220 pairs, in 9858 ms (shingle_size of 3, over words)
@@ -398,7 +387,7 @@ From a sample of 50000 rows (170 MB), with $K = 3$, the detected near-duplicate 
 ## Improvements over the original paper
 
 - Fingerprints from 32 up to 512 bits (instead of fixed 64 bits)
-- $K$ value of any size (instead of $K = 3$)
+- K value of any size (instead of K=3)
 - Four different feature models available
 - Semantic near-duplicate detection
 - FastSimHash
@@ -415,7 +404,7 @@ From a sample of 50000 rows (170 MB), with $K = 3$, the detected near-duplicate 
 ## Some observations {.smaller}
 
 - Benchmarks show that fingerprint sizes are relevant only to avoid collisions on large datasets.
-- The optimal $K$ value seems to be low enough to justify the proposed algorithm for all analyzed datasets.
+- The optimal K value seems to be low enough to justify the proposed algorithm for all analyzed datasets.
 - The *Embeddings* model is the best feature model overall (despite the aggressive binary quantization), considering that better-performing open-source models are available.
 - PySpark's optimizer may cause issues: it's good practice to check the Physical Plan of a transformation pipeline before executing it.
 - Locality trumps computational complexity: the *detect_near_duplicate_batch* method has two implementations, that strive to minimize one of the two. The one that minimizes locality is generally much faster.
