@@ -28,8 +28,8 @@ In this work only the "batch" version of the proposed algorithm is implemented, 
 Two strings are considered *near-duplicates* if they are *similar enough*.
 :::
 
-Unfortunately, it's hard to pin-point the criteria and the degree that make two strings similar.
-They might be similar semantically (eg. same argument, or same topic) or syntactically (eg. their words are about the same).
+Unfortunately, it's hard to pin-point the criteria that make two strings similar.
+For example, they might be similar semantically (eg. same argument, or same topic) or syntactically (eg. their words are about the same).
 
 ## Near-duplicates Detection
 
