@@ -32,10 +32,6 @@ def get_embeddings(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
         if not embedding:
             raise ValueError("[get_embeddings, quantize] The input embedding weight list is empty.")
 
-        assert threshold >= -1 and threshold <= 1, (
-            f"[get_embeddings, quantize] The input threshold ({threshold}) is invalid - it must be in the [-1, 1] range."
-        )
-
         arr = np.array(embedding, dtype=np.float32)
         return np.packbits(arr >= threshold).tobytes()
 
@@ -55,7 +51,8 @@ def get_embeddings(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
                 # Add prompt instruction to all texts
                 prompts = [PROMPT + chunk for chunk in batch]
                 payload = {"model": MODEL, "input": prompts}
-                response = session.post(OLLAMA_URL, json=payload, timeout=60)
+                print(payload)
+                response = session.post(OLLAMA_URL, json=payload, timeout=20)
                 response.raise_for_status()
                 data = response.json()
                 batch_res = data.get("embeddings", [])
@@ -69,7 +66,7 @@ def get_embeddings(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
                 )
 
         quantized_embeddings = [
-            quantize(acc[j].tolist(), float(np.median(j))) for j in range(len(text_list))
+            quantize(acc[j].tolist(), float(np.median(acc[j]))) for j in range(len(text_list))
         ]
 
         yield pd.Series(quantized_embeddings)
@@ -89,21 +86,21 @@ def make_fingerprints(
     Returns:
         DataFrame: output dataframe
     """
-    assert input_col in df.columns, (
-        f"[make_fingerprints (embeddings)] The specified input column ({input_col}) is not present in the DataFrame schema ({df.columns})"
-    )
+    assert (
+        input_col in df.columns
+    ), f"[make_fingerprints (embeddings)] The specified input column ({input_col}) is not present in the DataFrame schema ({df.columns})"
 
-    assert dict(df.dtypes).get(input_col) == "string", (
-        f"[make_fingerprints (embeddings)] The type of the input column ({input_col}) is ({dict(df.dtypes).get(input_col)}) instead of (string)"
-    )
+    assert (
+        dict(df.dtypes).get(input_col) == "string"
+    ), f"[make_fingerprints (embeddings)] The type of the input column ({input_col}) is ({dict(df.dtypes).get(input_col)}) instead of (string)"
 
-    assert output_col not in df.columns, (
-        f"[make_fingerprints (embeddings)] The specified output column ({output_col}) is already present in the DataFrame schema ({df.columns})"
-    )
+    assert (
+        output_col not in df.columns
+    ), f"[make_fingerprints (embeddings)] The specified output column ({output_col}) is already present in the DataFrame schema ({df.columns})"
 
-    assert fingerprint_size in FINGERPRINT_SIZES, (
-        f"[make_fingerprints (embeddings)] The specified fingerprint size ({fingerprint_size}) is invalid; its possible values are ({FINGERPRINT_SIZES})"
-    )
+    assert (
+        fingerprint_size in FINGERPRINT_SIZES
+    ), f"[make_fingerprints (embeddings)] The specified fingerprint size ({fingerprint_size}) is invalid; its possible values are ({FINGERPRINT_SIZES})"
 
     df = df.withColumn(
         output_col,

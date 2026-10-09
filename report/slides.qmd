@@ -1,5 +1,5 @@
 ---
-title: "Reproducing \"Near-Duplicate Detection for Web Crawling\""
+title: "Reproducing \"Near-Duplicate Detection for Web Crawling\" with PySpark"
 author: "Big Data course project"
 format: 
   revealjs:
@@ -14,12 +14,14 @@ format:
 
 ## Original paper (cont.)
 
-The reference paper aims to:
+The reference paper aims to answer this question:
 
-- Show that Charikar's SimHash algorithm is effective to generate similar hashes for similar data;
-- Present an efficient algorithm that allows to detect near-duplicates pairs, up to a (reasonably small) Hamming distance K.
+Suppose to have two input data sources (a *query* and a *dataset*). 
+Is it possible to detect all near-duplicate pairs of data efficiently (i.e., without a cartesian product)?
 
-In this work only the "batch" version of the proposed algorithm is implemented, using PySpark.
+*query* can be a single value (*online*) or a set of values (*batch*): only the latter is considered in this work.
+
+As title suggests, the proposed implementation uses the PySpark framework.
 
 ## Near-duplicates
 

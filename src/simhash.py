@@ -172,18 +172,25 @@ def simhash_shingles_over_chars(
         if text is None or text.strip() == "":
             raise ValueError(f"[simhash_shingles_over_chars] The input text ({text}) is empty.")
 
-        if window_size <= len(text):
+        if window_size >= len(text):
             shingles = [text]
         else:
             shingles = [text[i : i + window_size] for i in range(len(text) - window_size + 1)]
 
         if shingles == []:
-            raise Exception("[simhash_shingles_over_chars] Error during shingles extraction.")
+            raise Exception(
+                f"[simhash_shingles_over_chars] Error during shingles extraction of text ({text}) with window size ({window_size})"
+            )
 
         hashes = [
             blake2b(shingle.encode(), digest_size=int(fingerprint_size / 8)).digest()
             for shingle in shingles
         ]
+
+        if hashes == []:
+            raise Exception(
+                f"[simhash_shingles_over_chars] Error during hash generation of shingles ({shingles})"
+            )
 
         return fastsimhash(hashes=hashes)
 
@@ -201,7 +208,7 @@ def simhash_shingles_over_words(
         words = text.split()
 
         if len(words) <= window_size:
-            shingles = words
+            shingles = [text.replace(" ", "")]
         else:
             shingles = [
                 "".join(words[i : i + window_size]) for i in range(len(words) - window_size + 1)

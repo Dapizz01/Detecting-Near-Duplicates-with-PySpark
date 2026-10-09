@@ -23,29 +23,67 @@ fig-align: center
 ---
 
 # Introduction
-Detecting duplicates in a dataset is crucial for tasks such as web crawling or AI model training, as it frees up computational resources.
-A straightforward approach to solve this involves hashing the data and comparing all rows via a Cartesian product.
-However, this approach is fragile: minor syntax differences in the data might produce entirely different hashes, which is undesirable.
-Moreover, the time complexity of a Cartesian product is $O(n^2)$, making it unfeasable for large datasets.
-The approach proposed by Manku et al. [@original_paper] suggests to identify near-duplicates instead.
-This method aims to generate similar hashes for similar data, leveraging this property to optimize the comparison algorithm.
-It's also tested whether the algorithm is robust enough to find semantical near-duplicates, using a transformer-based embedding model.
-Lastly, some of the cited feature models and the proposed fingerprint matching algorithm are benchmarked against a variety of datasets, showcasing the efficiency of this algorithm.
+This work aims to answer the following question: 
+given two datasets, is it possible to detect near duplicate pairs of data efficiently?
+
+That question was tackled by Manku et al.'s paper [@original_paper], applied to web crawling.
+
+The "Definitions and Terminology" chapter formalizes and explains the terms used throughout this paper,
+while the "Methodology" chapter contains the higher-level logic of the solution proposed.
+"Implementation" chapter talks about implementation details and lastly "Result" shows an application of the implementation across multiple datasets.
+
+# Definitions and Terminology
+This paragraphs includes common terminology used in later chapters.
+In this paper only textual data (i.e. strings) are considered, however the approach is similar to any other type of data.
+
+- Two data are *duplicate* if they are exactly equal. In practice, their hash digest is the same.
+- Two data are *near-duplicate* if they are *similar enough* to some criteria.
+- A *feature* is a property of some data, obtained from the application of a *feature model*. 
+For example, a feature value can be $32$ and its feature model might be "the number of words in the string".
+Note that a single data might have multiple features.
+- A *fingerprint* is a binary string of fixed length that represents the content of some data.
+- A *partition* of a fingerprint is a substring of that fingerprint. Each partition is exclusive: it cannot overlap with other partitions.
+- A *schema* defines how many partitions should be used and how to combine them for the near-duplicate algorithm.
 
 # Methodology
-The methodology illustred by Manku can be divided into a two-part sequential pipeline.
+Consider an easier variant of the tracted problem:
+given two datasets, is it possible to detect ~~near~~ duplicate pairs of data ~~efficiently~~? 
+
+This can be trivially solved computing hash digests for every data in the datasets and using a Cartesian product:
+if two digests match then they are duplicate (ignoring hash collisions).
+
+However, this wouldn't work to detect *near* duplicates: two almost identical data might have wildly different digests.
+Also, a Cartesian product is too inefficient to process large datasets.
+
+The following sub-chapters aim to solve these issues, replicating the original paper methodology.
 
 ## 1. Fingerprint Generation
-The objective of this first phase is to transform text into a single, fixed-length binary value, referred to as a *fingerprint*.
-Specifically, similar data must corrispond to similar fingerprints (i.e. having a low Hamming distance).
-To achieve this, Charikar's SimHash [@simhash] is adopted: each text is converted into a set of *features*,
-which are then assembled to form a *fingerprint*, a fixed-length binary string.
-A set of features is reduced into a fingerprint by selecting the most frequent bit value at each position: $1$ if the majority of bits are $1$ at that index, $0$ otherwise.
+As previously mentioned, hash functions can't represent data for near-duplicate detection purposes.
 
-Selecting the appropriate feature model for a given dataset is crucial.
-The original paper proposes various feature models, such as *Shingles* and *TF-IDF* (preferred by the authors of the reference paper).
+In order to solve this issue, Charikar's SimHash [@simhash] algorithm is used.
+Given an input string and a feature model, its approach can be described as follows:
+1. Features are extracted from the input;
+2. All features are hashed;
+3. The features digests are combined into a fingerprint, taking the most popular bit value for each bit index, across all digests.
+
+<!-- Continue from here -->
+
+
+The objective of this first phase is to transform each string of a dataset into a single, fixed-length binary string, referred to as a *fingerprint*.
+A *fingerprint* can be considered as the "identifier" of that string, that represents "what it means".
+This operation is usually done once, however some feature models require to perform this phase again when the dataset changes.
+
+The process to compute fingerprints starts with the extraction of features from all strings in the dataset, following the chosen feature model.
+Now each string has a set of features, called the *feature set*.
+Then all features are hashed, using an hashing function of choice, obtaining the digests, a set of binary values with fixed length.
+Lastly, all feature digests that belong to some string are reduced to a single binary value (a *fingerprint*) with the following criteria:
+for all bit indexes, the fingerprint has value $1$ if most digests have value $1$ in that bit index, $0$ otherwise.
+This algorihtm is called SimHash [@simhash], presented by Charikar et al.
+
+Selecting the appropriate feature model is crucial.
+The original paper proposes various feature models, such as *Shingles* and *TF-IDF*.
 In this work, four feature models are tested and compared:
-*Bag of Words*, *Shingles*, *TF-IDF* and *Embeddings*, using fingerprint sizes ranging from 32 bits up to 512 bits.
+*Bag of Words*, *Shingles*, *TF-IDF* and *Embeddings*.
 
 ### Bag of Words
 For a given text, its features are the individual words it contains.
@@ -82,13 +120,12 @@ While all previous models rely on syntax to extract features,
 embedding models operate on semantics, allowing for the detection of semantical near-duplicate text.
 
 ## 2. Fingerprint Matching
-After the fingerprints generation, each dataset row has an identifying fingerprint.
+After the previous section, each string now has an identifying fingerprint.
 The goal for this phase is to compare fingerprints from two datasets, called *dataset* and *query* for simplicity sake,
-in order to find pairs of fingerprints which Hamming distance is less than $K$, a fixed integer value.
+in order to find pairs of fingerprints whose Hamming distance is less than $K$, a fixed integer value.
 The reference paper [@original_paper] approaches this problem by splitting each fingerprint into at least $K+n$ *partitions*, for $n > 0$.
 This grants a useful property: if two fingerprints are near-duplicate by a factor of $K$, then at least $n$ of their $K+n$ partitions must be equal 
 (the opposite doesn't hold - other partitions might have more than $K$ different bits).
-A *schema* describes how partitions should be combined to efficiently find near-duplicate fingerprints.
 The optimal schema is derived by the following formula:
 $$X(f, k, d) = \begin{cases} 
 1 & \text{if } d < \tau \\ 
@@ -103,7 +140,7 @@ Manku's approach can be summerized as follows:
 3. Fingerprints are sorted and then compressed, using Huffman codes
 4. All query copies are broadcasted to workers
 5. Workers iterate over *dataset*, extracting partitions from all rows and checking if it matches at least one of the *query* fingerprints (with the same schema instance), using binary search
-3. Fingerprint pairs with matching partitions *might* be near-duplicate: if their Hamming distance is less than K they are considered a near-duplicate pair
+6. Fingerprint pairs with matching partitions *might* be near-duplicate: if their Hamming distance is less than K they are considered a near-duplicate pair
 
 # Implementation
 This implementation uses the PySpark [@pyspark] framework, which allows to trivially scale the computation to clusters, for large datasets.
@@ -140,6 +177,37 @@ The Huffman Code compression strategy is not implemented: it would require a fix
 However, it is certainly recommended for production environments where fingerprints are stored, with a fixed $K$ value.
 
 # Results
+
+## *qqp* dataset
+
+This dataset is the de-facto standard for near-duplicate detection algorithms.
+It features more than 300,000 rows of labelled text pairs, which are titles extracted from Quora's questions, a rather famous website.
+In this benchmark, a sample of 199 rows are considered, splitted in 76 near-duplicates and 123 non near-duplicates.
+[put reason for such small sample]
+
+[image-1] shows feature model's f1-score on the chosen sample: as expected, Embeddings is the best performing model, although not by much. [image-2] shows a clearer image: Embeddings is the only model capable of truly detecting duplicates, as shown by the spike around $K=6$.
+
+However, Embeddings score isn't as high as one might expect: it's possible that the heavy quantization applied to the produced weights drags down its score, or the (rather small) embedding model might not be "smart" enough for this task.
+In order to verify this, the computed f1-score is compared to the result of Gill et al. [source].
+Literature shows that larger, state-of-the-art generic-purpose embedding models settle on a f1-score of $0.77$, which isn't far from the best obtained score from this work (which is $0.68$).
+Moreover, Gill et al. show that fine-tuning can drastically improve performance: in this work, the embedding model is used as-is. This can be an idea for a point of improvement.
+[TODO: compute best score with embeddings on K=4, 5 or 6 - it might be higher than $0.68$, on the whole QQP]
+
+From [image-2] it's possible to assume that larger fingerprint sizes don't affect the f1-score (for this dataset).
+Most likely, large fingerprint sizes might be useful in huge datasets, where collision risk is higher.
+
+It's important to also consider the optimal K value: if the optimal K value is too high then this algorithm isn't optimal. As shown in chapter [link-to-chapter-with-K-complexity-graph], the K value must be low enough to guarantee decent performance. If this wasn't the case, a trivial Cartesian product would be more efficient. Considering the Embedding feature model and a fingerprint size of 64 bits, the optimal K value seems to be between 3 to 6, from image [image-3].
+
+## Feature models: efficiency
+
+In this section, feature models's efficiency is tested.
+As [...] shows, all feature models take about the same time, except for TF-IDF.
+The other models are all local: each data elaboration is independent from other, which makes it efficient and easy to compute across workers.
+On the other hand, TF-IDF cannot replicate this: it's necessary to create a large, global data structure that counts how many times each word appears in all the dataset, resulting in a slower computation.
+
+
+
+
 
 ## 1. Fingerprint Generation
 The proposed feature models are compared across two datasets: *llm-paraphrases* and *wikipedia*.
