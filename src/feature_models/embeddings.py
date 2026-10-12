@@ -7,14 +7,62 @@ import requests
 from pyspark.sql import DataFrame
 from pyspark.sql.types import BinaryType
 
+# from sentence_transformers import SentenceTransformer
 from src.fingerprint import FINGERPRINT_SIZES
 
 # These parameters are meant for Ollama, may need to be changed on other devices.
 OLLAMA_URL = "http://localhost:11434/api/embed"
+OLLAMA_HOST = "http://localhost:11434"
 MODEL = "Qwen3-embedding:0.6b"
+# MODEL = "all-minilm:22m"
 BATCH_SIZE = 16
 CTX_SIZE = 1500
 PROMPT = "Instruct: Retrieve semantically equivalent texts.\nQuery: "
+
+"""
+@F.pandas_udf(BinaryType())
+def get_embeddings_test(it: Iterator[pd.Series]) -> Iterator[pd.Series]:
+    model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device="cpu")
+    for s in it:
+        emb = model.encode(s.fillna("").tolist(), batch_size=128)
+        bits = np.packbits(emb >= np.median(emb, axis=1, keepdims=True), axis=1)
+        yield pd.Series([r.tobytes() for r in bits])
+"""
+
+"""
+@F.pandas_udf(BinaryType())
+def get_embeddings(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
+    # Reuse client across iterator chunks
+    client = ollama.Client(host=OLLAMA_HOST)
+
+    for series in iterator:
+        text_list = series.tolist()
+        num_items = len(text_list)
+        if num_items == 0:
+            yield pd.Series([], dtype=object)
+            continue
+
+        raw_embeddings = []
+
+        # Batch embed calls to Ollama
+        for i in range(0, num_items, BATCH_SIZE):
+            batch = text_list[i : i + BATCH_SIZE]
+            prompts = [PROMPT + (chunk if chunk else "") for chunk in batch]
+
+            try:
+                response = client.embed(model=MODEL, input=prompts)
+                raw_embeddings.extend(response.get("embeddings", []))
+            except Exception as e:
+                raise RuntimeError(f"[get_embeddings] Ollama inference failed: {e}")
+
+        # shape: (num_items, dims)
+        mat = np.asarray(raw_embeddings, dtype=np.float32)
+        medians = np.median(mat, axis=1, keepdims=True)
+        packed_bits = np.packbits(mat >= medians, axis=1)
+        quantized_series = pd.Series([row.tobytes() for row in packed_bits])
+
+        yield quantized_series
+"""
 
 
 @F.pandas_udf(BinaryType())  # type: ignore # noqa: F821
@@ -51,7 +99,6 @@ def get_embeddings(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
                 # Add prompt instruction to all texts
                 prompts = [PROMPT + chunk for chunk in batch]
                 payload = {"model": MODEL, "input": prompts}
-                print(payload)
                 response = session.post(OLLAMA_URL, json=payload, timeout=20)
                 response.raise_for_status()
                 data = response.json()
@@ -86,21 +133,21 @@ def make_fingerprints(
     Returns:
         DataFrame: output dataframe
     """
-    assert (
-        input_col in df.columns
-    ), f"[make_fingerprints (embeddings)] The specified input column ({input_col}) is not present in the DataFrame schema ({df.columns})"
+    assert input_col in df.columns, (
+        f"[make_fingerprints (embeddings)] The specified input column ({input_col}) is not present in the DataFrame schema ({df.columns})"
+    )
 
-    assert (
-        dict(df.dtypes).get(input_col) == "string"
-    ), f"[make_fingerprints (embeddings)] The type of the input column ({input_col}) is ({dict(df.dtypes).get(input_col)}) instead of (string)"
+    assert dict(df.dtypes).get(input_col) == "string", (
+        f"[make_fingerprints (embeddings)] The type of the input column ({input_col}) is ({dict(df.dtypes).get(input_col)}) instead of (string)"
+    )
 
-    assert (
-        output_col not in df.columns
-    ), f"[make_fingerprints (embeddings)] The specified output column ({output_col}) is already present in the DataFrame schema ({df.columns})"
+    assert output_col not in df.columns, (
+        f"[make_fingerprints (embeddings)] The specified output column ({output_col}) is already present in the DataFrame schema ({df.columns})"
+    )
 
-    assert (
-        fingerprint_size in FINGERPRINT_SIZES
-    ), f"[make_fingerprints (embeddings)] The specified fingerprint size ({fingerprint_size}) is invalid; its possible values are ({FINGERPRINT_SIZES})"
+    assert fingerprint_size in FINGERPRINT_SIZES, (
+        f"[make_fingerprints (embeddings)] The specified fingerprint size ({fingerprint_size}) is invalid; its possible values are ({FINGERPRINT_SIZES})"
+    )
 
     df = df.withColumn(
         output_col,

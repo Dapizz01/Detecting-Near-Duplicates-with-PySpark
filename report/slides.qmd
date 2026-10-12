@@ -399,7 +399,6 @@ From a sample of 50000 rows (170 MB), with K=3, the detected near-duplicate pair
 - Remove near-duplicate pages to improve web crawling processes efficiency
 - Sanitize datasets from near-duplicate entries
 - Spam detection and plagiarism
-- Detect malwares from a known dataset of malicious softwares
 - Build advanced file systems, able to bundle together files with similar content
 - ... and much more: this algorithm is not restricted to just textual data.
 
