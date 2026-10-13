@@ -4,8 +4,8 @@ author:
   - name: Name Surname
 date: 2026-08-01
 abstract: |
-    This paper aims to reproduce the findings of the "Near-Duplicate Detection for Web Crawling" work, 
-    using PySpark to scale the proposed algorithm, under different datasets, feature models and parameters.
+    This paper reproduces the findings of the "Near-Duplicate Detection for Web Crawling" work, 
+    using PySpark to scale the proposed algorithm across different datasets, feature models and parameter values.
 keywords: [near-duplicate detection, nlp, feature extraction, big data, pyspark]
 format:
   typst:
@@ -24,41 +24,43 @@ fig-align: center
 
 # Introduction
 
-This work aims to answer the following question: 
+This work aims to answer a central question: 
 given two datasets, is it possible to detect near duplicate pairs of data efficiently?
 
-That question was tackled by Manku et al.'s paper [@original_paper], applied to web crawling.
+That question was originally tackled by Manku et al. [@original_paper] in the context of web crawling.
 
-The "Definitions and Terminology" chapter formalizes and explains the terms used throughout this paper,
-while the "Methodology" chapter contains the higher-level logic of the solution proposed.
-"Implementation" chapter talks about implementation details and lastly "Result" shows an application of the implementation across multiple datasets.
+The "Definitions and Terminology" section formalizes and defines key concepts used throughout this paper.
+The "Methodology" section describes the high-level logic of the proposed solution, while "Implementation" covers practical details. 
+Lastly, "Results" presents an evaluation of the algorithm across multiple datasets.
 
 # Definitions and Terminology
 
-This paragraphs includes common terminology used in later chapters.
-In this paper only textual data (i.e. strings) are considered, however the approach is similar to any other type of data.
+This section includes terms used in subsequent chapters.
+Although this paper focuses exclusively on textual data (i.e., strings), the methodology applies to any data type.
 
-- Two data are *duplicate* if they are exactly equal. In practice, their hash digest is the same.
-- Two data are *near-duplicate* if they are *similar enough* to some criteria.
-- A *feature* is a property of some data, obtained from the application of a *feature model*. 
-For example, a feature value can be $32$ and its feature model might be "the number of words in the string".
-Note that a single data might have multiple features.
-- A *fingerprint* is a binary string of fixed length that represents the content of some data.
-- A *partition* of a fingerprint is a substring of that fingerprint. Each partition is exclusive: it cannot overlap with other partitions.
-- A *schema* defines how many partitions should be used and how to combine them for the near-duplicate algorithm.
+- Two data are *duplicate* if they are identical, possessing the same hash digest.
+- Two data are *near-duplicate* if they satisfy a specific similarity threshold, called $K$.
+- A *feature* is a characteristic of some data, generated from the application of a *feature model*. 
+For instance, a feature value could be $32$ and its feature model might be "the number of words in the string".
+A single data might possess multiple features.
+- A *fingerprint* is a fixed-length binary string that represents the content of some data.
+- A *partition* of a non-overlapping substring of a fingerprint.
+- A *schema* defines the number of partitions to create and how to combine them.
 
 # Methodology
 
-Consider an easier variant of the tracted problem:
-given two datasets, is it possible to detect ~~near~~ duplicate pairs of data ~~efficiently~~? 
+In order to understand the core problem, consider a simplified variant:
+given two datasets, can exact duplicate pairs be detected efficiently? 
 
-This can be trivially solved computing hash digests for every data in the datasets and using a Cartesian product:
-if two digests match then they are duplicate (ignoring hash collisions).
+This easier problem can be solved by computing hash digests for every data in both datasets and performing a Cartesian product:
+if two digests match then they must be duplicate (ignoring hash collisions for simplicity sake).
 
-However, this wouldn't work to detect *near* duplicates: two almost identical data might have wildly different digests.
-Also, a Cartesian product is too inefficient to process large datasets.
+However, this approach fails for *near-duplicates*, as two nearly identical data can produce completely different digests.
+Moreover, a Cartesian product is computationally expensive to perform on large datasets.
 
-The following sub-chapters aim to solve these issues, replicating the original paper [@original_paper] methodology.
+The following sub-sections address these limitations by replicating the methodology presented by Manku et al. [@original_paper].
+
+<!-- REVISION UP TO HERE -->
 
 ## 1. Fingerprint Generation
 
@@ -166,16 +168,19 @@ A custom implementation was developed but ultimately scrapped: its performance w
 
 ### Embeddings
 
-<!-- UPDATE THIS -->
-In this study, a transformer-based model, *Qwen3-embedding-0.6b* [@qwen3embedding] quantized to INT8, is used and executed locally using Ollama, chosen for its excellent size to performance ratio.
+In this study a transformer-based model, *Qwen3-embedding:0.6b* [@qwen3embedding] quantized to Q8_0, is used through Ollama.
 
 Unfortunately, the execution environment is unfit for the processing of large batches of embeddings:
-all experiments are ran on a MacBook Air M1 with 8GB of RAM, shared with user applications and PySpark.
-This forces to perform benchmarks on (very) small samples.
+all experiments are ran on a MacBook Air M1 laptop with 8GB of RAM, featuring 11 TOPS on INT8 operations and a memory bandwith of around 68 GB/s.
 
-Naturally, this environment isn't intended for this kind of algorithm.
-For reference, the Apple Silicon M1 scores around 5 TOPS (Trillion of OPerations per Second) on INT8, while an Nvidia GeForce RTX 5070 computes 246.9 TOPS, about 50 times more than the Apple Silicon M1.
-Performance are also hit by the low amount of RAM, reaching red levels of RAM usage on MacOS's Activity Manager, further increasing the required runtime.
+A simple benchmark shows that the M1 chip manages to reach a throughput of 26.5 items/sec, where each item has an average of 10 tokens.
+This is further optimizable using an INT4 MLX model, optimized for the Apple Silicon environment: using this variant boosts the throughput to 75 items/sec.
+Considering the latter case, it would take around 9 hours to compute the weights for the *qqp* dataset.
+
+For example, a desktop consumer GPU like an RTX 5070 yields 500 TFLOPS on FP4 operations (using the NVFP4 variant of *Qwen3-embedding:0.6b*) with a memory bandwith of 670 GB/s,
+having about 50x more compute power and 10x memory bandwith compared to the M1 chip.
+
+Applied to the *qqp* dataset, such GPU would allow to compute the whole dataset in around 10 minutes.
 
 ## FastSimHash
 
@@ -198,12 +203,7 @@ This chapter showcases the benchmark results of the algorithm previously describ
 The algorithm is ran on a MacBook Air M1 8GB, in a user environment with Safari, Ollama and Visual Studio Code running.
 PySpark has been configured to use 8 workers.
 
-Unfortunately, the RAM available is too low for this task.
-MacOS's Activity Monitor memory usage indicator is yellow during execution, reaching red spikes during embeddings computation.
-This causes severe performance downgrade, which required to lower the sample size for the following analysis.
-It's expected that a more suitable device with more RAM and/or a dedicated GPU would obtain better performance on large datasets.
-
-<!-- Embedding model performance M1 vs 5090 -->
+The adopted sample size is severely reduced due to hardware limitations; consult chapter "Implementation - Embeddings" for more information.
 
 ## Features models: performance
 
@@ -242,7 +242,6 @@ it's possible that the heavy quantization applied to the produced weights drags 
 In order to verify this, the computed f1-score is compared to the result of Gill et al. [@embeddingspaper].
 @fig-qqp-embed-literature shows that larger, state-of-the-art generic-purpose embedding models settle on a f1-score of $0.77$, which isn't far from the best obtained score from this work (which is $0.68$).
 Moreover, Gill et al. show that fine-tuning can drastically improve performance: in this work, the embedding model is used as-is. This can be considered for a possible improvement.
-<!-- TODO: compute best score with embeddings on K=4, 5 or 6 - it might be higher than $0.68$, on the whole QQP] -->
 
 From @fig-qqp-fpsize it's possible to assume that larger fingerprint sizes don't affect the f1-score (for this dataset).
 Most likely, large fingerprint sizes might be useful in huge datasets, where the collision risk is higher.

@@ -217,7 +217,8 @@ flowchart LR
 
 Each string is converted into a set of floating point weights, using the embedding model Qwen3-embedding:0.6b.
 The fingerprint is obtained by quantizing each weight to 0/1, using the median as pivot.
-Requires rather large amount of memory for long inputs.
+
+Unfortunately the adopted model is quite compute-hungry for a laptop, forcing to use small samples for analysis.
 
 There's no need to use SimHash here: the model provides only one feature for each string.
 
@@ -227,6 +228,10 @@ Performed on the *llm-paraphrases* dataset.
 
 TF-IDF is the slowest model by far: it requires to create a frequency map of all words in the dataset.
 
+Embeddings isn't listed: its performance are lackluster for large datasets without a dedicated GPU.
+For a deeper analysis, consult the full report.
+
+<!-- update graph -->
 ![](media/feature_models_performance.png)
 
 # Near-duplicate batch detection algorithm
