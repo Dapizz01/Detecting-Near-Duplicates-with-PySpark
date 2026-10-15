@@ -27,7 +27,7 @@ fig-align: center
 This work aims to answer a central question: 
 given two datasets, is it possible to detect near duplicate pairs of data efficiently?
 
-That question was originally tackled by Manku et al. [@original_paper] in the context of web crawling.
+That question was originally tackled by Manku et al. [@original_paper] within the context of web crawling.
 
 The "Definitions and Terminology" section formalizes and defines key concepts used throughout this paper.
 The "Methodology" section describes the high-level logic of the proposed solution, while "Implementation" covers practical details. 
@@ -60,159 +60,163 @@ Moreover, a Cartesian product is computationally expensive to perform on large d
 
 The following sub-sections address these limitations by replicating the methodology presented by Manku et al. [@original_paper].
 
-<!-- REVISION UP TO HERE -->
-
 ## 1. Fingerprint Generation
 
-As previously mentioned, hash functions can't represent data for near-duplicate detection purposes.
+As previously mentioned, standard hash functions cannot preserve similarity for near-duplicate detection.
 
-In order to solve this issue, Charikar's SimHash [@simhash] algorithm is used.
-Given an input string and a feature model, its approach can be described as follows:
-1. Features are extracted from the input;
-2. All features are hashed;
-3. The features digests are combined into a fingerprint, taking the most popular bit value for each bit index, across all digests.
+To solve this, Charikar's SimHash [@simhash] algorithm is used.
+Given an input string and a feature model, the SimHash algorithm can be described as follows:
+1. Features are extracted from the input data.
+2. Each feature is hashed into a fixed-length bit vector (a *digest*).
+3. All digests are combined into a *fingerprint* by selecting the most popular bit value across all digests at each bit position.
 
-Selecting the right feature model is crucial: 
-too many features slows down SimHash, while too little will drop performance down.
-In the following subchapters, four different feature models are considered.
+Selecting an appropiate feature model is crucial: 
+extracting too many features slows down execution, while too little will drop detection precision.
+The following subsections evaluate four different feature models.
 
 ### Bag of Words
 
-For a given text, its features are the individual words it contains.
-Hence, two texts are considered near-duplicate if they contain about the same words.
+For a given document, its features are the individual words it contains.
+Two documents are considered near-duplicate if their vocabulary is similar.
 This approach is computationally efficient and simple to implement, but it fails to preserve spatial locality.
-For example, the sentence "The bank is after the office" yields the exact same features as "The office is after the bank".
+For example, the document "The bank is after the office" yields the same features of "The office is after the bank".
 
 ### Shingles
 
-Generally, a shingle is a contiguous sequence of $n$ items from a data source; in this context, it refers to an overlapping contiguous sequence of $n$ characters.
+A shingle is a contiguous sequence of $n$ items extracted from some document.
+Items can be characters or words, and they can or cannot overlap.
 Shingles are generated using a sliding window algorithm with a window size of $n$.
-This model preserves locality to some extent, but it generates a large number of features, which can negatively impact performance.
-To reduce the feature count, a non-overlapping variant is considered.
-Additionally, word-based shingles (as opposed to traditional character-based ones) are evaluated.
+This model preserves locality to some extent, but it generates a large number of features, which negatively impacts performance.
 
 ### TF-IDF
 
-A refined version of *Bag of Words* that accounts for both the frequency of a word within a specific text (DF) and its rarity across the entire dataset (IDF):
-$$\text{TF-IDF}(term, document, Dataset) = TF(term, document) * IDF(term, Dataset)$$
-TF stands for Term Frequency, which assigns higher importance to words that appear frequently in a given text:
-$$TF(term, document) = \frac{\text{How many times term appears in document}}{\text{How many words document has}}$$
-IDF stands for Inverse Document Frequency, which assigns higher weight to words that appear in fewer documents.
-This filters out very common words, such as conjunctions and verbs:
-$$IDF(term, Dataset) = \log(\frac{\text{Total number of documents in Dataset}}{\text{Number of documents that contain term}})$$
-This is the feature model chosen in the original paper [@original_paper].
+Term Frequency - Inverse Document Frequency (TF-IDF) is a refinement of the *Bag of Words* approach that assigns weights to terms,
+according to their rarity within a document (TF) and, inversely, in the whole dataset (IDF):
+$$\text{TF-IDF}(t, d, D) = TF(t, d) * IDF(t, D)$$
+where $t$ is a term, $d$ is a document and $D$ is the dataset.
 
-Despite its higher accuracy, it's computationally more expensive than previous models, 
-as it requires dataset-wide transformations.
-Furthermore, maintenance introduces additional overhead, as the weights of each term must be recomputed whenever the dataset changes.
+TF measures local term frequency:
+$$TF(t, d) = \frac{\text{How many times term t appears in document d}}{\text{Total word count of document d}}$$
+
+Meanwhile, IDF penalizes words that are common across the dataset:
+$$IDF(t, D) = \log(\frac{\text{Total number of documents in dataset D}}{\text{Number of documents containing term t}})$$
+
+This is the feature model adopted in the original paper [@original_paper].
+Although more accurate than *Bag of Words*, *TF_IDF* is computationally more expensive than previous models, 
+requiring dataset-wide aggregations.
+Furthermore, dataset updates introduces overhead: the weights of all terms must be readjusted.
 
 ### Embeddings {#sec-embeddings}
 
-<!-- TO REVISE -->
-An embedding model is a machine learning algorithm that maps text into a vector capturing its semantic meaning.
-In this study, a transformer-based model, *Qwen3-embedding-0.6b* [@qwen3embedding], is used and executed locally using Ollama.
-Each weight of the generated embeddings is quantized to 0/1, taking the median of all weights as pivot, becoming a bit of the result fingerprint.
-Although suboptimal, this is required in order to build binary fingerprints.
-While all previous models rely on syntax to extract features, 
-embedding models operate on semantics, allowing for the detection of semantical near-duplicate text.
+An embedding model is a neural architecture that maps text into a vector capturing its semantic meaning.
+In this work the *Qwen3-embedding-0.6b* [@qwen3embedding] model is executed locally using Ollama.
+
+Each weight of the generated embeddings is quantized to 0/1, using the vector median as pivot, yielding a fingerprint.
+Only one feature is produced for each document, the fingerprint itself: SimHash isn't needed in this case.
+
+The applied quantization appears lossy: this insight is explored in detail in the *qqp dataset* subsection.
 
 ## 2. Fingerprint Matching {#sec-fpmatch}
 
-All data now has an associated fingerprint.
+::: {layout-nrow=3}
+![Expected candidate graph](media/detection_scaling.png){#fig-candidate-graph}
+:::
 
-The goal for this phase is to compare fingerprints from two datasets, called *dataset* and *query* for simplicity sake,
-in order to find pairs of fingerprints whose Hamming distance is less than $K$, a fixed integer value.
+After fingerprint generation, the target dataset (*dataset*) and the query set (*query*) are compared to find fingerprint pairs whose Hamming distance is less than or equal to a fixed threshold *K*.
+Query is always assumed to be the smaller set.
 
-The reference paper [@original_paper] approaches this problem by splitting each fingerprint into at least $K+n$ *partitions*, for $n > 0$.
-This grants a useful property: if two fingerprints are near-duplicate by a factor of $K$, then at least $n$ of their $K+n$ partitions must be equal 
-(the opposite doesn't hold - other partitions might have more than $K$ different bits).
-The optimal schema is derived by the following formula:
+Manku et al. [@original_paper] address this problem by splitting each fingerprint into $K+n$ *partitions*, for $n > 0$.
+This guarantees that if two fingerprints differ by at most *K* bits then they must share at least *n* of their $K+n$ partitions.
+Such pair is called a *candidate*.
+Candidate pairs are then evaluated by computing their Hamming distance.
+
+The optimal schema is computed using:
 $$X(f, k, d) = \begin{cases} 
 1 & \text{if } d < \tau \\ 
 \min_{r > k} \binom{r}{k} \cdot X\left(\frac{f k}{r}, k, d - \frac{(r-k)f}{r}\right) & \text{otherwise} 
 \end{cases}$$
-where $f$ is the size of each fingerprint, $K$ is the maximum allowed Hamming distance, $d$ is the $log_2$ size of query and $p_min$ is the maximum allowed candidate set size (in $log_2$).
+where *f* denotes the fingerprint bit size, *K* is the maximum Hamming distance, *d* is the logarithmic size ($log_2$) of query and $\tau$ is the logarithmic threshold ($log_2$) for the maximum allowable candidate set.
 
-As previously stated, for a given $K$ value it's necessary to create at least $K+n$ partitions, for any $n>0$. 
-As $K$ grows, the number of partitions also grows, shrinking the partition size and exploding the number of candidates for each partition.
-Image [image-K-complexity] shows that, for a fingerprint size of 64 bits, a $K$ value below 6 is suggested (approximately 10% of the fingerprint size).
+For a similarity threshold *K*, at least $K+n$ partitions are generated.
+As $K$ increases, the number of partitions grows, shrinking the partition size and expanding the number of candidates.
+As shown in @fig-candidate-graph, for a 64 bit fingerprint, fixing $K$ below 6 is suggested (approximately 10% of the fingerprint size) to keep a moderate amount of candidate pairs.
 
-Manku's approach can be summerized as follows:
+The complete pipeline is structured as follows:
 
-1. $n$ copies of *query* are generated, where $n = \binom{r}{k}$, computed by the previous formula
-2. For each copy, a schema instance is applied: a partition of all fingerprints of a copy are cut and pasted on the head of all fingerprints
-3. Fingerprints are sorted and then compressed, using Huffman codes
-4. All query copies are broadcasted to workers
-5. Workers iterate over *dataset*, extracting partitions from all rows and checking if it matches at least one of the *query* fingerprints (with the same schema instance), using binary search
-6. Fingerprint pairs with matching partitions *might* be near-duplicate: if their Hamming distance is less than K they are considered a near-duplicate pair
+1. Generate $n=\binom{r}{k}$ copies of query, following the partiton schema.
+2. For each copy, the partition bits are extracted and put as prefix, for all fingerprints.
+3. Sort and compress fingerprints using Huffman codes.
+4. Broadcast all query copies to each worker.
+5. On each worker, iterate over the dataset, extracting all partitions and executing binary search over the appropriate query copy, in order to find candidates.
+6. Compute Hamming distance for all candidate pairs.
 
 # Implementation {#sec-impl}
 
-This implementation uses the PySpark [@pyspark] framework, which allows to trivially scale the computation to clusters, for large datasets.
-The next subchapters will include notes and observations about the PySpark implementation.
+The system is implemented using Apache PySpark [@pyspark], enabling distributed computation across nodes for large datasets.
 
 ## Feature Models {#sec-feature-models}
 
-The implemented feature models are *Bag Of Words*, *Shingles*, *TF-IDF* and *Embeddings*.
-All of them are based on PySpark's DataFrames, using native methods from the package ```pyspark.sql.functions```.
+The processing pipeline relies on PySpark's DataFrames, using native methods from the package ```pyspark.sql.functions```.
 When necessary, Pandas UDF are adopted.
 
 ### Bag of Words and Shingles
 
-Their implementation is straightforward.
+Both models were implemented natively using string methods.
 
 ### TF-IDF
 
-In PySpark, this model is implemented using ```pyspark.ml.features.IDF``` and ```pyspark.ml.features.CountVectorizer```. 
-A custom implementation was developed but ultimately scrapped: its performance were much worse than the methods provided by the PySpark library.
+TF-IDF is developed using ```pyspark.ml.features.IDF``` and ```pyspark.ml.features.CountVectorizer```. 
+A custom implementation was initially developed but discarded: its performance were worse than the methods provided by the framework.
 
 ### Embeddings
 
-In this study a transformer-based model, *Qwen3-embedding:0.6b* [@qwen3embedding] quantized to Q8_0, is used through Ollama.
+In this study a transformer-based model, *Qwen3-embedding:0.6b* [@qwen3embedding] quantized to 8 bit integers (*Q8_0*), is used through Ollama.
 
-Unfortunately, the execution environment is unfit for the processing of large batches of embeddings:
-all experiments are ran on a MacBook Air M1 laptop with 8GB of RAM, featuring 11 TOPS on INT8 operations and a memory bandwith of around 68 GB/s.
+Hardware constraints posed significant bottlenecks during embedding computation:
+experiments were conducted on a Apple MacBook Air M1 with 8GB of memory, providing 11 INT8 TOPS and 68GB/s of memory bandwith.
 
-A simple benchmark shows that the M1 chip manages to reach a throughput of 26.5 items/sec, where each item has an average of 10 tokens.
-This is further optimizable using an INT4 MLX model, optimized for the Apple Silicon environment: using this variant boosts the throughput to 75 items/sec.
-Considering the latter case, it would take around 9 hours to compute the weights for the *qqp* dataset.
+Benchmarking on the M1 chipset demonstrated a maximum throughput of 26.5 items/sec (averaging 10 tokens per item).
+Switching to an INT4 variant optimized for Apple Silicon (MLX) improved throughput to 75 items/sec.
+At this throughput, processing the *qqp* dataset (considered in a later subsection) requires approximately 9 hours.
 
-For example, a desktop consumer GPU like an RTX 5070 yields 500 TFLOPS on FP4 operations (using the NVFP4 variant of *Qwen3-embedding:0.6b*) with a memory bandwith of 670 GB/s,
-having about 50x more compute power and 10x memory bandwith compared to the M1 chip.
-
-Applied to the *qqp* dataset, such GPU would allow to compute the whole dataset in around 10 minutes.
+By comparison, a modern desktop GPU (e.g., Nvidia RTX 5070 delivering about 500 FP4 TFLOPS and 670GB/s bandwidth) running an NVFP4 variant would process the whole dataset in approximately 10 minutes.
 
 ## FastSimHash
 
-SimHash can be naively implemented using an array of counters and iterating over all feature's digests.
-It's possible to optimize it by using Numba, a Just-In-Time compiler for Python that translates Python and NumPy code into machine code, using SIMD instructions wherever possible.
-Instead of iterating over all digests, it iterates over byte indexes and uses 8 counters (one for each bit of a byte) to reduce memory updates.
-This is inspired by Otmar Ertl's FastSimHash implementation [@fast_simhash], which uses a SWAR (SIMD Within A Register) technique instead of pure SIMD instructions.
-It's a remarkable improvement: performing SimHash with 1000000 digests takes around 14000ms, while FastSimHash takes around 400ms (including compilation time, on a cold boot).
+A standard SimHash implementation uses an array of bit counters and iterates through every bit of every feature digest. 
+To accelerate this algorithm, a high-performance variant was implemented using Numba to compile the native Python/NumPy program into SIMD-accelerated code.
+Rather than processing individual feature bits sequentially, the algorithm operates across byte indices using 8 parallel counters per byte column. 
+This design is heavily inspired from Ertl's FastSimHash [@fast_simhash], leveraging SWAR (SIMD Within A Register) operations. 
+Benchmarks indicate that processing 1,000,000 64 bit feature digests requires ~14,000 ms using SimHash versus ~400 ms using FastSimHash (inclusive of initial JIT compilation overhead).
 
 ## Fingerprint Detection with RDDs
 
-The detection algorithm from the original paper [@original_paper] has been replicated in PySpark using RDDs, with some differences.
-Instead of using a binary search algorithm, an hash map is used: it requires slightly more memory, but it optimizes the candidate search from $O(log n)$ to $O(1)$.
-The Huffman Code compression strategy is not implemented: it would require a fixed $K$ value, which is not the case for this study.
-However, it is certainly recommended for production environments where fingerprints are stored, with a fixed $K$ value.
+The matching process was implemented on PySpark Resilient Distributed Datasets (RDDs). 
+Also, the binary search algorithm has been replaced with an hash-map lookup operation, optimizing execution time.
+Huffman compression was omitted in this implementation to allow evaluation across different *K* values, though it remains recommended for production pipelines operating on fixed *K* values.
 
 # Results
 
-This chapter showcases the benchmark results of the algorithm previously described, across different datasets.
-The algorithm is ran on a MacBook Air M1 8GB, in a user environment with Safari, Ollama and Visual Studio Code running.
-PySpark has been configured to use 8 workers.
+All benchmarks were evaluated on an Apple MacBook Air M1 (8GB RAM) with 8 active PySpark workers.
+PySpark execution ran alongside user background applications (Safari, Ollama, VS Code). 
+Dataset sample sizes were downscaled due to hardware limitations (see Implementation - Embeddings).
 
-The adopted sample size is severely reduced due to hardware limitations; consult chapter "Implementation - Embeddings" for more information.
+## Feature Model Runtime Comparison
 
-## Features models: performance
+::: {layout-nrow=3}
+![Performance comparison on a large sample](media/feature_models_performance.png){#fig-modperf}
 
-In this section, feature models's performance are tested.
-As [...] shows, *Shingles* and *Bag of Words* perform similarly, while *TF-IDF* takes much more time.
-The other models are all local: each data elaboration is independent from other, which makes it efficient and easy to compute across workers.
-On the other hand, TF-IDF cannot replicate this: it's necessary to create a large, global data structure that counts how many times each word appears in all the dataset, resulting in a slower computation.
+![Performance comparison on a small sample](media/feature_model_performance_low_sample.png){#fig-modperf-small}
+:::
 
-*Embeddings* feature model isn't included, as discussed in the previous chapter.
+This benchmark was run on the *llm-paraphrases* dataset.
+
+@fig-modperf shows execution time across feature extraction models.
+*Shingles* and *Bag of Words* are very efficient thanks to their fully localized computation.
+On the other hand, TF-IDF presents significantly higher processing times because computing document frequencies requires a global aggregation operation, which requires data shuffle. 
+
+Embeddings performance are very poor; this is due to low computation power (as described in the Implementation - Embeddings section) and memory saturation, forcing swap memory usage.
+This is highlighted on @fig-modperf-small.
 
 ## *qqp* dataset
 
@@ -228,26 +232,22 @@ On the other hand, TF-IDF cannot replicate this: it's necessary to create a larg
 ![Precision-Recall linegraph](media/qqp/precision_recall.png){#fig-qqp-precision-recall}
 :::
 
-This dataset is the de-facto standard for near-duplicate detection algorithms.
-It features more than 300,000 rows of text pairs, labelled as "near-duplicate" or "not near-duplicate", which are titles extracted from Quora's questions, a famous Q&A website.
-A pair is considered "near-duplicate" if its semantic meaning is the same.
+The Quora Question Pairs (qqp) dataset serves as a benchmark for semantic near-duplicate text identification, containing over 300,000 question pairs labeled as semantic duplicates or non-duplicates.
+Tests were performed on a sample of 200 pairs (100 near-duplicates and 100 non-duplicates).
 
-In this benchmark, a sample of 199 rows are considered, splitted in 76 near-duplicates and 123 non near-duplicates.
+@fig-qqp-model shows the maximum F1-scores obtained across different feature models. 
+As expected, *Embeddings* yields the highest performance, although not by much.
 
-@fig-qqp-model shows feature model's f1-score on the chosen sample: as expected, *Embeddings* is the best performing model, although not by much. 
-@fig-qqp-K shows a clearer image: *Embeddings* is the only model capable of truly detecting duplicates, as shown by the spike around $K=6$.
+@fig-qqp-K allows to inspect this behaviour: at high *K* values all feature model "degenerate", considering all pairs as duplicates.
+Only *Embeddings* is actually able to distinguish semantic near-duplicates.
 
-However, *Embeddings* score isn't as high as one might expect:
-it's possible that the heavy quantization applied to the produced weights drags down its score, or the (rather small) embedding model might not be "smart" enough for this task.
-In order to verify this, the computed f1-score is compared to the result of Gill et al. [@embeddingspaper].
-@fig-qqp-embed-literature shows that larger, state-of-the-art generic-purpose embedding models settle on a f1-score of $0.77$, which isn't far from the best obtained score from this work (which is $0.68$).
-Moreover, Gill et al. show that fine-tuning can drastically improve performance: in this work, the embedding model is used as-is. This can be considered for a possible improvement.
+The peak F1-score for Embeddings ($0.75$) should be limited by binary quantization and smaller model scale. 
+In benchmark comparisons from Gill et al. [@embeddingspaper] (@fig-qqp-embed-literature), unquantized state-of-the-art embedding models achieve F1-scores in the same range, disproving the idea.
 
-From @fig-qqp-fpsize it's possible to assume that larger fingerprint sizes don't affect the f1-score (for this dataset).
-Most likely, large fingerprint sizes might be useful in huge datasets, where the collision risk is higher.
+@fig-qqp-fpsize shows that increasing fingerprint size beyond 64 bits yields minimal F1 improvements on this evaluation set, though larger fingerprint sizes remain essential to avoid collisions.
 
-Considering the Embedding feature model and a fingerprint size of 64 bits, the optimal K value seems to be between 3 to 6, from @fig-qqp-precision-recall. 
-This guarantees an optimal environment for this algorithm applicaiton.
+For 64-bit embedding fingerprints, @fig-qqp-precision-recall indicates an optimal distance parameter range from 6 to 8.
+Consult section Methodology - Fingerprint Matching for more details.
 
 ## *Wikipedia* dataset
 
@@ -257,42 +257,29 @@ This guarantees an optimal environment for this algorithm applicaiton.
 ![Optimal K to fingerprint size ratio for best performing configurations](media/wikipedia/K_fingerprintsize.png){#fig-wikipedia-K}
 :::
 
-It's a dataset of 998 Wikipedia entries. 
-Each row contains two entries that can be syntactically duplicate or not.
-Duplicate entries are the same entries but modified to introduce noise: 
-about 10% of the words are altered.
-Meanwhile, non-duplicate entries are completely Wikipedia entries.
-
-Once again, the *Embeddings* feature model isn't represented:
-some entries are over 87,000 characters long, which immediately saturates the available memory.
-
-@fig-wikipedia-model shows a promising result: all feature models achieve an almost perfect score.
-It's also expected that *Embeddings* would perform similarly.
-
-Meanwhile, @fig-wikipedia-K assures that the optimal K value to fingerprint size ratio is around 0.1, within limits for an optimal execution.
+This dataset is a sample of 998 paired Wikipedia entries. 
+Duplicate pairs represent modified versions of original articles with about 10% injected word-level noise, while non-duplicates contain unrelated Wikipedia pages.
+The *Embeddings* feature model was excluded from this benchmark because of article lengths: some exceed 87,000 characters, which saturates the available memory.
+@fig-wikipedia-model proves that all considered feature models achieve near-perfect classification scores on this benchmark. 
+As shown in @fig-wikipedia-K, optimal performance occurs when maintaining an optimal K-to-fingerprint-length ratio near 0.1.
 
 # Applications
 
-What follows are some application ideas.
-This work can be used in all context where near-duplication detection is required, as long as the $K$ value is low enough.
+The suggested near-duplicate detection framework supports various practical applications, provided target thresholds *K* remain small enough:
 
-- As the source paper [@original_paper] suggests, remove near-duplicate pages to improve web crawling processes efficiency.
-This can be extended to any data cleanup workflow.
-- Given a dataset of known spam, it's possible to filter out incoming spam comparing the incoming mails with the dataset.
-This can also be used to prevent plagiarism.
-- Build advanced file systems, able to bundle together files with similar content.
+- Web Crawling and Storage Deduplication: Filtering redundant web pages during crawling processes, as originally detailed by Manku et al. [@original_paper], or optimizing general data cleaning pipelines.
+- Spam and Plagiarism Detection: Matching incoming content against databases of known spam, repetitive content, or copyrighted text.
+- Content-Aware File Systems: Building storage systems that group and deduplicate documents based on syntactic or semantic similarity.
 
 # Future explorations
 
-- The inadequately small amount of RAM made the *Embeddings* model not fit for large datasets.
-Running it on a more adequate machine (with a dedicated GPU, or with 16GB+ of memory) would surely fare much better performance.
-- Despite this work focus on textual data, it's possible to adapt the described algorithm to any other type of media by using a different feature extraction model.
-For example it's possible to describe programs using their AST, or images with advanced multimodal embedding models.
-- This algorithm is usually executed on a data center (or a single server), which requires significant processing power when using embedding models on large batches of data.
-It's possible to alleviate this by computing embeddings on the client hardware: modern laptops are equipped with TPUs (Tensor Processing Unit) like Apple's ANE (Apple Neural Engine): 
-dedicated circuit optimized to perform tensor operations, ideal for quick, local embedding computation.
+- Hardware Acceleration: Expanding embedding-based deduplication to large corpora requires dedicated GPU infrastructure or unified high-memory architectures (16GB+ RAM) to resolve local throughput bottlenecks.
+- Cross-Modal Extensions: Extending the algorithm to non-textual contexts (e.g., using ASTs for source code deduplication, or multi-modal embeddings for image and video datasets).
+- Edge Offloading: Moving neural embedding computations to client devices equipped with neural accelerators (e.g., Apple Neural Engine) to reduce central cluster processing.
+- Finetuned Embedding Model: Replacing the adopted general purpose embedding model with a specialized, finetuned model could increase results. 
+@fig-qqp-embed-literature from Gill et al. [@embeddingspaper] proves that with their *LangCache-Embed* benchmark scores.
 
 # Conclusion
 
-The results have shown that the near-duplicate detection algorithm ideated by Manku et al [@original_paper] is consistent with literature.
-Also, it's flexible enough to support advanced feature models like embeddings, detecting semantic and syntactic near-duplicates for low $K$ values.
+This work confirms that the near-duplicate detection algorithm introduced by Manku et al. [@original_paper] scales effectively, leveraging PySpark's properties, aligning with modern benchmarks.
+Furthermore, integrating neural embeddings extends the algorithm capabilities beyond syntactic duplicate detection to semantic near-duplicate detection at relatively low Hamming distances.

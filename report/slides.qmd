@@ -100,7 +100,7 @@ SimHash can be naively implemented using an array of counters and iterating over
 It's possible to optimize it by using Numba, a Just-In-Time compiler for Python that translates Python and NumPy code into machine code, using SIMD instructions wherever possible.
 Instead of iterating over all digests, it iterates over bit indexes and uses local counters (kept in CPU registers) to reduce memory updates.
 
-Benchmark performed on 1000000 64 bit digests:
+Benchmark performed on 1,000,000 64 bit digests:
 
 Round 1:
 SimHash time: 14104 ms,
@@ -231,7 +231,6 @@ TF-IDF is the slowest model by far: it requires to create a frequency map of all
 Embeddings isn't listed: its performance are lackluster for large datasets without a dedicated GPU.
 For a deeper analysis, consult the full report.
 
-<!-- update graph -->
 ![](media/feature_models_performance.png)
 
 # Near-duplicate batch detection algorithm
@@ -277,7 +276,7 @@ Higher K values forces the algorithm to adopt small partitions, which generates 
 ## Semantic near-duplicates: qqp dataset analysis {.scrollable .smaller}
 
 Industry standard as a semantic near-duplicate detection benchmark.
-Small sample of 199 rows with 76 near-duplicate rows.
+Small sample of 200 pairs, with 100 near-duplicate rows.
 
 ```{python}
 #| output: asis
@@ -320,13 +319,9 @@ Computed on 64 bits fingerprints.
 
 ## qqp: f1 score - shingle variants
 
-3-shingles over words seem more effective.
-
 ![](media/qqp/f1score_shingle.png)
 
 ## qqp: precision - recall
-
-The optimal K value is around 5 to 6.
 
 ![](media/qqp/precision_recall.png)
 
@@ -354,7 +349,7 @@ for col in df.columns:
 print(df.to_markdown())
 ```
 
-## Wikipeida: f1score - feature model heatmap
+## Wikipedia: f1score - feature model heatmap
 
 All features models are strong enough to ignore syntactical noise.
 
