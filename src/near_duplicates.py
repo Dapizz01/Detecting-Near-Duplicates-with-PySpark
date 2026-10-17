@@ -201,11 +201,17 @@ def detect_near_duplicate_batch(
     assert p_min > 0, (
         f"[detect_near_duplicate_batch] The chosen p_min value ({p_min}) must be positive."
     )
-    assert ("ID, fingerprint") in dataset.columns, (
-        "[detect_near_duplicate_batch] The dataset DataFrame schema is invalid: it must contain columns 'ID' and 'fingerprint'"
+    assert "ID" in dataset.columns, (
+        "[detect_near_duplicate_batch] The dataset DataFrame schema is invalid: it doesn't contain column 'ID'."
     )
-    assert ("ID, fingerprint") in query.columns, (
-        "[detect_near_duplicate_batch] The query DataFrame schema is invalid: it must contain columns 'ID' and 'fingerprint'"
+    assert "fingerprint" in dataset.columns, (
+        "[detect_near_duplicate_batch] The dataset DataFrame schema is invalid: it doesn't contain column 'fingerprint'."
+    )
+    assert "ID" in dataset.columns, (
+        "[detect_near_duplicate_batch] The query DataFrame schema is invalid: it doesn't contain column 'ID'."
+    )
+    assert "fingerprint" in dataset.columns, (
+        "[detect_near_duplicate_batch] The query DataFrame schema is invalid: it doesn't contain column 'fingerprint'."
     )
 
     if rec_depth != 1:

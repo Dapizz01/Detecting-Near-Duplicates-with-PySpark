@@ -44,7 +44,7 @@ Although this paper focuses exclusively on textual data (i.e., strings), the met
 For instance, a feature value could be $32$ and its feature model might be "the number of words in the string".
 A single data might possess multiple features.
 - A *fingerprint* is a fixed-length binary string that represents the content of some data.
-- A *partition* of a non-overlapping substring of a fingerprint.
+- A *partition* is a non-overlapping substring of a fingerprint.
 - A *schema* defines the number of partitions to create and how to combine them.
 
 # Methodology
@@ -66,9 +66,10 @@ As previously mentioned, standard hash functions cannot preserve similarity for 
 
 To solve this, Charikar's SimHash [@simhash] algorithm is used.
 Given an input string and a feature model, the SimHash algorithm can be described as follows:
-1. Features are extracted from the input data.
+
+1. Features are extracted from input data.
 2. Each feature is hashed into a fixed-length bit vector (a *digest*).
-3. All digests are combined into a *fingerprint* by selecting the most popular bit value across all digests at each bit position.
+3. All digests (of a single data) are combined into a *fingerprint* by selecting the most popular bit value across all digests at each bit position.
 
 Selecting an appropiate feature model is crucial: 
 extracting too many features slows down execution, while too little will drop detection precision.
@@ -102,7 +103,7 @@ Meanwhile, IDF penalizes words that are common across the dataset:
 $$IDF(t, D) = \log(\frac{\text{Total number of documents in dataset D}}{\text{Number of documents containing term t}})$$
 
 This is the feature model adopted in the original paper [@original_paper].
-Although more accurate than *Bag of Words*, *TF_IDF* is computationally more expensive than previous models, 
+Although more accurate than *Bag of Words*, *TF-IDF* is computationally more expensive than previous models, 
 requiring dataset-wide aggregations.
 Furthermore, dataset updates introduces overhead: the weights of all terms must be readjusted.
 
@@ -139,7 +140,7 @@ where *f* denotes the fingerprint bit size, *K* is the maximum Hamming distance,
 
 For a similarity threshold *K*, at least $K+n$ partitions are generated.
 As $K$ increases, the number of partitions grows, shrinking the partition size and expanding the number of candidates.
-As shown in @fig-candidate-graph, for a 64 bit fingerprint, fixing $K$ below 6 is suggested (approximately 10% of the fingerprint size) to keep a moderate amount of candidate pairs.
+As shown in @fig-candidate-graph, for a 64 bit fingerprint, fixing $K$ below 8 is suggested to keep a moderate amount of candidate pairs.
 
 The complete pipeline is structured as follows:
 
@@ -177,9 +178,11 @@ experiments were conducted on a Apple MacBook Air M1 with 8GB of memory, providi
 
 Benchmarking on the M1 chipset demonstrated a maximum throughput of 26.5 items/sec (averaging 10 tokens per item).
 Switching to an INT4 variant optimized for Apple Silicon (MLX) improved throughput to 75 items/sec.
-At this throughput, processing the *qqp* dataset (considered in a later subsection) requires approximately 9 hours.
+At this throughput, processing the *qqp* dataset (considered in a later subsection) requires approximately 90 minutes.
+Unfortunately, this level of performance cannot be replicated in this project:
+PySpark requires a large amount of memory, forcing the usage of swap memory when running the embedding model.
 
-By comparison, a modern desktop GPU (e.g., Nvidia RTX 5070 delivering about 500 FP4 TFLOPS and 670GB/s bandwidth) running an NVFP4 variant would process the whole dataset in approximately 10 minutes.
+By comparison, a modern desktop GPU (e.g., Nvidia RTX 5070 delivering about 500 FP4 TFLOPS and 670GB/s bandwidth) running an NVFP4 variant would process the whole dataset in less than 10 minutes.
 
 ## FastSimHash
 
