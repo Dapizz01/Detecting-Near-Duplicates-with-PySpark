@@ -27,6 +27,7 @@ def hamming_distance_bin(col1: pd.Series, col2: pd.Series) -> pd.Series:
 def detect_near_duplicates_pairs(df: DataFrame, f1: str, f2: str, K: int) -> DataFrame:
     assert f1 in df.columns
     assert f2 in df.columns
+    assert K > 0
     df = df.withColumn(
         "hamming_distance",
         hamming_distance_bin(F.col(f1), F.col(f2)),  # type: ignore
@@ -52,6 +53,7 @@ def detect_near_duplicates_benchmark(
     assert f1_col in df.columns
     assert f2_col in df.columns
     assert truth_col in df.columns
+    assert K > 0
 
     df = df.withColumn(
         "hamming_distance",
@@ -118,7 +120,26 @@ class FingerprintPartitioner:
 
 
 def partitions_schema(f: int, K: int, d: int, p_min: int, depth: int) -> tuple[int, list[dict]]:
-    """Estimates the optimal tables schema using the equation from the original paper."""
+    """Estimates the optimal number of tables and their schema to find near-duplicates.
+
+    Args:
+        f (int): fingerprint size, in bits.
+        K (int): similarity threshold, in bits.
+        d (int): log_2 size of a dataset (*query*, usually).
+        p_min (int): log_2 maximum candidate pairs for each row
+        depth (int): recursion depth
+
+    Returns:
+        tuple[int, list[dict]]: _description_
+    """
+
+    assert f in FINGERPRINT_SIZES, (
+        f"[partitions_schema] The chosen fingerprint size ({f}) is not valid. Select one of the following: {FINGERPRINT_SIZES}."
+    )
+    assert K < f, f"[partitions_schema] K value ({K}) cannot be higher than f ({f})."
+    assert d > 0, f"[partitions_schema] d value ({d}) must be higher than 0."
+    assert p_min > 0, f"[partitions_schema] p_min value ({p_min}) must be higher than 0."
+    assert depth > 0, f"[partitions_schema] depth value ({depth}) must be higher than 0."
 
     @lru_cache(maxsize=None)
     def _search_schema(f_curr: int, d_curr: int, depth: int) -> tuple[int, list[dict]]:

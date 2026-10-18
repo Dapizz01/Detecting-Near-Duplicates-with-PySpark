@@ -7,9 +7,9 @@ from pyspark.sql import DataFrame
 @dataclass
 class Metrics:
     accuracy: float  # How many near-duplicates detections were correct?
-    precision: float  # TODO
+    precision: float  # How many near-duplicates detected as such were really near-duplicates?
     recall: float  # How many true near-duplicates were detected?
-    f1_score: float  # TODO
+    f1_score: float  # Combined score of previous metrics.
 
 
 @dataclass
@@ -23,12 +23,12 @@ class ModelMetrics:
 
 
 def extract_metrics(df: DataFrame, test_col: str, truth_col: str) -> Metrics:
-    assert (
-        test_col in df.columns
-    ), f"[extract_metrics] The test column ({test_col}) isn't present in the DataFrame schema ({df.columns})."
-    assert (
-        truth_col in df.columns
-    ), f"[extract_metrics] The truth column ({truth_col}) isn't present in the DataFrame schema ({df.columns})"
+    assert test_col in df.columns, (
+        f"[extract_metrics] The test column ({test_col}) isn't present in the DataFrame schema ({df.columns})."
+    )
+    assert truth_col in df.columns, (
+        f"[extract_metrics] The truth column ({truth_col}) isn't present in the DataFrame schema ({df.columns})"
+    )
 
     bow_metrics = df.agg(
         F.sum(

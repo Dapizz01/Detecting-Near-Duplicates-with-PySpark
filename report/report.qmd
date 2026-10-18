@@ -1,7 +1,7 @@
 ---
 title: "Reproducing \"Near-Duplicate Detection for Web Crawling\""
-author:
-  - name: Name Surname
+subtitle: '"Big Data" course project'
+author: "Name Surname"
 date: 2026-08-01
 abstract: |
     This paper reproduces the findings of the "Near-Duplicate Detection for Web Crawling" work, 
@@ -179,7 +179,7 @@ experiments were conducted on a Apple MacBook Air M1 with 8GB of memory, providi
 Benchmarking on the M1 chipset demonstrated a maximum throughput of 26.5 items/sec (averaging 10 tokens per item).
 Switching to an INT4 variant optimized for Apple Silicon (MLX) improved throughput to 75 items/sec.
 At this throughput, processing the *qqp* dataset (considered in a later subsection) requires approximately 90 minutes.
-Unfortunately, this level of performance cannot be replicated in this project:
+Unfortunately, this work cannot leverage the M1 chip to the fullest:
 PySpark requires a large amount of memory, forcing the usage of swap memory when running the embedding model.
 
 By comparison, a modern desktop GPU (e.g., Nvidia RTX 5070 delivering about 500 FP4 TFLOPS and 670GB/s bandwidth) running an NVFP4 variant would process the whole dataset in less than 10 minutes.
@@ -202,11 +202,11 @@ Huffman compression was omitted in this implementation to allow evaluation acros
 
 All benchmarks were evaluated on an Apple MacBook Air M1 (8GB RAM) with 8 active PySpark workers.
 PySpark execution ran alongside user background applications (Safari, Ollama, VS Code). 
-Dataset sample sizes were downscaled due to hardware limitations (see Implementation - Embeddings).
+Dataset sample sizes were downscaled due to hardware limitations (see *Implementation - Embeddings*).
 
 ## Feature Model Runtime Comparison
 
-::: {layout-nrow=3}
+::: {layout-nrow=1}
 ![Performance comparison on a large sample](media/feature_models_performance.png){#fig-modperf}
 
 ![Performance comparison on a small sample](media/feature_model_performance_low_sample.png){#fig-modperf-small}
@@ -218,8 +218,7 @@ This benchmark was run on the *llm-paraphrases* dataset.
 *Shingles* and *Bag of Words* are very efficient thanks to their fully localized computation.
 On the other hand, TF-IDF presents significantly higher processing times because computing document frequencies requires a global aggregation operation, which requires data shuffle. 
 
-Embeddings performance are very poor; this is due to low computation power (as described in the Implementation - Embeddings section) and memory saturation, forcing swap memory usage.
-This is highlighted on @fig-modperf-small.
+Embeddings performance are very poor, as @fig-modperf-small outlines, verifying the claims of the *Implementation - Feature Models - Embeddings* subsection.
 
 ## *qqp* dataset
 
@@ -249,8 +248,7 @@ In benchmark comparisons from Gill et al. [@embeddingspaper] (@fig-qqp-embed-lit
 
 @fig-qqp-fpsize shows that increasing fingerprint size beyond 64 bits yields minimal F1 improvements on this evaluation set, though larger fingerprint sizes remain essential to avoid collisions.
 
-For 64-bit embedding fingerprints, @fig-qqp-precision-recall indicates an optimal distance parameter range from 6 to 8.
-Consult section Methodology - Fingerprint Matching for more details.
+For 64-bit embedding fingerprints, @fig-qqp-precision-recall indicates an optimal distance parameter range from 6 to 8, which is small enough.
 
 ## *Wikipedia* dataset
 
@@ -262,27 +260,29 @@ Consult section Methodology - Fingerprint Matching for more details.
 
 This dataset is a sample of 998 paired Wikipedia entries. 
 Duplicate pairs represent modified versions of original articles with about 10% injected word-level noise, while non-duplicates contain unrelated Wikipedia pages.
-The *Embeddings* feature model was excluded from this benchmark because of article lengths: some exceed 87,000 characters, which saturates the available memory.
+
+The *Embeddings* feature model was excluded from this benchmark because of article lengths: some exceed 87,000 characters, which saturates the available context.
+
 @fig-wikipedia-model proves that all considered feature models achieve near-perfect classification scores on this benchmark. 
+
 As shown in @fig-wikipedia-K, optimal performance occurs when maintaining an optimal K-to-fingerprint-length ratio near 0.1.
 
 # Applications
 
-The suggested near-duplicate detection framework supports various practical applications, provided target thresholds *K* remain small enough:
+The suggested near-duplicate detection algorithm supports various applications, assuming target threshold *K* remains small enough:
 
-- Web Crawling and Storage Deduplication: Filtering redundant web pages during crawling processes, as originally detailed by Manku et al. [@original_paper], or optimizing general data cleaning pipelines.
+- Web Crawling and Storage Deduplication: Filtering redundant web pages during crawling processes, as originally considered by Manku et al. [@original_paper], or optimizing general data cleaning pipelines.
 - Spam and Plagiarism Detection: Matching incoming content against databases of known spam, repetitive content, or copyrighted text.
 - Content-Aware File Systems: Building storage systems that group and deduplicate documents based on syntactic or semantic similarity.
 
 # Future explorations
 
-- Hardware Acceleration: Expanding embedding-based deduplication to large corpora requires dedicated GPU infrastructure or unified high-memory architectures (16GB+ RAM) to resolve local throughput bottlenecks.
-- Cross-Modal Extensions: Extending the algorithm to non-textual contexts (e.g., using ASTs for source code deduplication, or multi-modal embeddings for image and video datasets).
+- Hardware Acceleration: Expanding embedding-based deduplication to large dataset requires dedicated GPU infrastructure or high-memory machines (16GB+ RAM) to resolve the low throughput.
+- Cross-Modal Feature Models: Extending the algorithm to non-textual contexts (e.g., using ASTs for source code deduplication, or multi-modal embeddings for image and video datasets).
 - Edge Offloading: Moving neural embedding computations to client devices equipped with neural accelerators (e.g., Apple Neural Engine) to reduce central cluster processing.
-- Finetuned Embedding Model: Replacing the adopted general purpose embedding model with a specialized, finetuned model could increase results. 
-@fig-qqp-embed-literature from Gill et al. [@embeddingspaper] proves that with their *LangCache-Embed* benchmark scores.
+- Finetuned Embedding Model: Replacing the adopted general purpose embedding model with a specialized, finetuned model as @fig-qqp-embed-literature from Gill et al. [@embeddingspaper] proves with *LangCache-Embed*.
 
 # Conclusion
 
 This work confirms that the near-duplicate detection algorithm introduced by Manku et al. [@original_paper] scales effectively, leveraging PySpark's properties, aligning with modern benchmarks.
-Furthermore, integrating neural embeddings extends the algorithm capabilities beyond syntactic duplicate detection to semantic near-duplicate detection at relatively low Hamming distances.
+Furthermore, using neural embeddings extends the algorithm capabilities beyond syntactic duplicate detection to semantic near-duplicate detection, keeping the optimal Hamming distance low enough.

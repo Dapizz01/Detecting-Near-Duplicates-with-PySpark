@@ -14,55 +14,9 @@ from src.fingerprint import FINGERPRINT_SIZES
 OLLAMA_URL = "http://localhost:11434/api/embed"
 OLLAMA_HOST = "http://localhost:11434"
 MODEL = "Qwen3-embedding:0.6b"
-# MODEL = "all-minilm:22m"
 BATCH_SIZE = 16
 CTX_SIZE = 1500
 PROMPT = "Instruct: Retrieve semantically equivalent texts.\nQuery: "
-
-"""
-@F.pandas_udf(BinaryType())
-def get_embeddings_test(it: Iterator[pd.Series]) -> Iterator[pd.Series]:
-    model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device="cpu")
-    for s in it:
-        emb = model.encode(s.fillna("").tolist(), batch_size=128)
-        bits = np.packbits(emb >= np.median(emb, axis=1, keepdims=True), axis=1)
-        yield pd.Series([r.tobytes() for r in bits])
-"""
-
-"""
-@F.pandas_udf(BinaryType())
-def get_embeddings(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
-    # Reuse client across iterator chunks
-    client = ollama.Client(host=OLLAMA_HOST)
-
-    for series in iterator:
-        text_list = series.tolist()
-        num_items = len(text_list)
-        if num_items == 0:
-            yield pd.Series([], dtype=object)
-            continue
-
-        raw_embeddings = []
-
-        # Batch embed calls to Ollama
-        for i in range(0, num_items, BATCH_SIZE):
-            batch = text_list[i : i + BATCH_SIZE]
-            prompts = [PROMPT + (chunk if chunk else "") for chunk in batch]
-
-            try:
-                response = client.embed(model=MODEL, input=prompts)
-                raw_embeddings.extend(response.get("embeddings", []))
-            except Exception as e:
-                raise RuntimeError(f"[get_embeddings] Ollama inference failed: {e}")
-
-        # shape: (num_items, dims)
-        mat = np.asarray(raw_embeddings, dtype=np.float32)
-        medians = np.median(mat, axis=1, keepdims=True)
-        packed_bits = np.packbits(mat >= medians, axis=1)
-        quantized_series = pd.Series([row.tobytes() for row in packed_bits])
-
-        yield quantized_series
-"""
 
 
 @F.pandas_udf(BinaryType())  # type: ignore # noqa: F821
@@ -218,84 +172,4 @@ def get_embeddings_experimental(iterator: Iterator[pd.Series]) -> Iterator[pd.Se
         quantized_embeddings = [
             quantize(acc[j].tolist(), float(np.median(j))) for j in range(len(text_list))
         ]
-        yield pd.Series(quantized_embeddings)
-
-
-# TODO: experimental. Works on larger documents, for some reason stops working after 16 fingerprints (a batch)
-@F.pandas_udf(BinaryType())  # type: ignore # noqa: F821
-def get_embeddings_experimental_v2(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
-    raise NotImplementedError(
-        "[get_embeddings_experimental_v2] This method is experimental.\n"
-        "Due to memory limits, calling get_embeddings(...) on large texts would cause OOM issues on 8GB machines.\n"
-        "This method tries to circumvent this by splitting the texts into chunks and assemble the weights together.\n"
-        "Unfortunately, this still causes OOM issues (and lowers benchmark scores).\n"
-        "It's recommended to just run get_embeddings(...) with 16GB+ memory machines.\n"
-        "It's also possible to lower the number of PySpark workers and batch_size."
-    )
-
-    def tokenize(text: str, limit: int) -> list[str]:
-        return [text[i : i + limit] for i in range(0, len(text), limit)]
-
-    def quantize(embedding: list[float], threshold: float) -> bytes:
-        if not embedding:
-            return b""
-        arr = np.array(embedding, dtype=np.float32)
-        return np.packbits(arr >= threshold).tobytes()
-
-    # Ollama provides a handy Python API for queries, but it's not usable
-    # in a Conda environment, because the embedding model is hosted in the base environment.
-    # As a workaround, the HTTP API are used here.
-    session = requests.Session()
-
-    for series in iterator:
-        text_list = series.tolist()
-        chunks: list[str] = []
-        chunk_owners: list[int] = []
-        chunk_counts = [0] * len(text_list)
-
-        for text_idx, text in enumerate(text_list):
-            toks = tokenize(text, CTX_SIZE // 2) if text else []
-            for chunk in toks:
-                chunks.append(chunk)
-                chunk_owners.append(text_idx)
-            chunk_counts[text_idx] = len(toks)
-
-        acc = np.zeros((len(text_list), 1024), dtype=np.float32)
-
-        # Batch inference over Ollama
-        for batch_start in range(0, len(chunks), BATCH_SIZE):
-            batch_chunks = chunks[batch_start : batch_start + BATCH_SIZE]
-            batch_owners = chunk_owners[batch_start : batch_start + BATCH_SIZE]
-            try:
-                prompts = [PROMPT + chunk for chunk in batch_chunks]
-                payload = {"model": MODEL, "input": prompts}
-                response = session.post(OLLAMA_URL, json=payload, timeout=60)
-                response.raise_for_status()
-                data = response.json()
-                batch_res = data.get("embeddings", [])
-                for o, emb in zip(batch_owners, batch_res):
-                    acc[o] += np.asarray(emb, dtype=np.float32)
-
-            except Exception as e:
-                raise RuntimeError(
-                    "[get_embeddings] Error generating embeddings. Ollama might be down, or not working properly.",
-                    e,
-                )
-
-        # Normalize rows by number of chunks so long texts don't overpower
-        for text_idx, count in enumerate(chunk_counts):
-            if count > 1:
-                acc[text_idx] /= count
-
-        # Quantize row by row using each vector's own median
-        quantized_embeddings = []
-        for text_idx in range(len(text_list)):
-            if chunk_counts[text_idx] == 0:
-                # Handle empty text
-                quantized_embeddings.append(b"")
-            else:
-                row = acc[text_idx]
-                row_median = float(np.median(row))
-                quantized_embeddings.append(quantize(row.tolist(), row_median))
-
         yield pd.Series(quantized_embeddings)

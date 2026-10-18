@@ -30,7 +30,7 @@ As title suggests, the proposed implementation uses the PySpark framework.
 Two strings are considered *near-duplicates* if they are *similar enough*.
 :::
 
-Unfortunately, it's hard to pin-point the criteria that make two strings similar.
+Unfortunately, it's hard to pin-point the similary criteria.
 For example, they might be similar semantically (eg. same argument, or same topic) or syntactically (eg. their words are about the same).
 
 ## Near-duplicates Detection
@@ -98,7 +98,7 @@ The result is a string of bits that "describes" the input string, called **finge
 SimHash can be naively implemented using an array of counters and iterating over all digests.
 
 It's possible to optimize it by using Numba, a Just-In-Time compiler for Python that translates Python and NumPy code into machine code, using SIMD instructions wherever possible.
-Instead of iterating over all digests, it iterates over bit indexes and uses local counters (kept in CPU registers) to reduce memory updates.
+Instead of iterating over all digests, it iterates over bit indexes and uses local counters to reduce memory updates.
 
 Benchmark performed on 1,000,000 64 bit digests:
 
@@ -328,9 +328,9 @@ Computed on 64 bits fingerprints.
 ## Syntax near-duplicates: wikipedia dataset analysis {.scrollable .smaller}
 
 Dataset composed of 1000 wikipedia entries pairs.
-Half of them are the same entry but with some random noise (altered words), from 5% to 10%.
+Half of them are the same entry but with 10% of random noise (altered words).
 The other are pairs of completely different entries.
-The *Embeddings* feature model couldn't be tested: it requires more than 8GB of RAM (16GB or more should be enough though).
+The *Embeddings* feature model couldn't be tested due to hardware limitations.
 
 ```{python}
 #| output: asis
@@ -384,7 +384,7 @@ From a sample of 50000 rows (170 MB), with K=3, the detected near-duplicate pair
 - *bag_of_words*: 32111 pairs, in 8679 ms
 - *shingles*: 22220 pairs, in 9858 ms (shingle_size of 3, over words)
 - *tf-idf*: 34626 pairs, in 79484 ms
-- *embeddings*: OOM
+- *embeddings*: couldn't process
 
 ## Improvements over the original paper
 
@@ -396,18 +396,8 @@ From a sample of 50000 rows (170 MB), with K=3, the detected near-duplicate pair
 
 ## Potential near-duplicate detection applications {.smaller}
 
-- Remove near-duplicate pages to improve web crawling processes efficiency
-- Sanitize datasets from near-duplicate entries
-- Spam detection and plagiarism
-- Build advanced file systems, able to bundle together files with similar content
-- ... and much more: this algorithm is not restricted to just textual data.
-
-## Some observations {.smaller}
-
-- Benchmarks show that fingerprint sizes are relevant only to avoid collisions on large datasets.
-- The optimal K value seems to be low enough to justify the proposed algorithm for all analyzed datasets.
-- The *Embeddings* model is the best feature model overall (despite the aggressive binary quantization), considering that better-performing open-source models are available.
-- PySpark's optimizer may cause issues: it's good practice to check the Physical Plan of a transformation pipeline before executing it.
-- Locality trumps computational complexity: the *detect_near_duplicate_batch* method has two implementations, that strive to minimize one of the two. The one that minimizes locality is generally much faster.
+- Web Crawling and Storage Deduplication: Filtering redundant web pages during crawling processes, as originally considered by Manku et al., or optimizing general data cleaning pipelines.
+- Spam and Plagiarism Detection: Matching incoming content against databases of known spam, repetitive content, or copyrighted text.
+- Content-Aware File Systems: Building storage systems that group and deduplicate documents based on syntactic or semantic similarity.
 
 # Thanks!
