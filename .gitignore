@@ -3,7 +3,9 @@
 *.egg-info/
 
 data/*
-!data/.gitkeep
+!data/quora_duplicate_questions.tsv
+!data/wikipedia_near_duplicate_10percent.csv
+
 
 results/
 

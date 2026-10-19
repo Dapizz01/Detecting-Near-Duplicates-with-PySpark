@@ -25,20 +25,8 @@ FEATURE_MODELS = ("bag_of_words", "shingles", "tf-idf", "embeddings")
 
 
 def data_path(*parts: str) -> Path:
-    """
-    Returns an absolute path in the following form - DATA_DIR/parts[0]/parts[1]...
-
-    Usage:
-        df = spark.read.csv(str(data_path("sells", "2024.csv")), header=True)
-    """
     return DATA_DIR.joinpath(*parts)
 
 
 def output_path(*parts: str) -> Path:
-    """
-    Returns an absolute path in the following form - OUTPUT_DIR/parts[0]/parts[1]...
-
-    Usage:
-        df = spark.read.csv(str(data_path("sells", "analysis_results.csv")), header=True)
-    """
     return OUTPUT_DIR.joinpath(*parts)

@@ -1,6 +1,6 @@
 ---
 title: "Reproducing \"Near-Duplicate Detection for Web Crawling\""
-subtitle: '"Big Data" course project'
+subtitle: '"Big Data" Course Project'
 author: "Name Surname"
 date: 2026-08-01
 abstract: |
